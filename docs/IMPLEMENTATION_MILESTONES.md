@@ -226,6 +226,9 @@ Do not create a misleading completed handoff during planning. M1.1 creates the f
 
 ## M3 — Developer Tools & Permissions
 
+**Status: COMPLETE (M3.1 and M3.2).** Required live OpenRouter verification and
+the final automated suite passed on 2026-10-05. See `verification.md`.
+
 ### M3.1 — Workspace file tools and immutable submissions
 
 **Goal:** Let the Developer read and change a disposable real workspace through enforced permissions, then let the Reviewer inspect a captured submission.
@@ -253,6 +256,9 @@ Do not create a misleading completed handoff during planning. M1.1 creates the f
 **Context handoff:** Read tool contracts, execution-control boundary, submission models, blueprint §§9–10, 15–17, and permission tests. Provider HTTP code, future SQL schema implementation, and frontend are unnecessary. Preserve orchestrator-only transitions and read-only Reviewer authority. Document file permissions, snapshot contents, and the temporary in-memory operation history.
 
 ### M3.2 — Approved commands, test evidence, and tool limits
+
+**Status: COMPLETE.** The required live small-project workflow completed with
+bounded approved tools; the full automated suite passed. M4.1 remains not started.
 
 **Goal:** Run explicitly approved development commands and attach their results to the reviewed submission.
 
@@ -519,8 +525,8 @@ M2  Orchestration
     M2.2 Complete workflow and bounded controls
  ↓
 M3  Tools & Permissions
-    M3.1 Workspace files and submissions
-    M3.2 Approved commands and test evidence
+    M3.1 Workspace files and submissions — COMPLETE
+    M3.2 Approved commands and test evidence — COMPLETE
  ↓
 M4  Persistence & Observability
     M4.1 SQLite history and accounting

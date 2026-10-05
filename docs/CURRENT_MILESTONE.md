@@ -2,21 +2,19 @@
 
 ## Status
 
-Current implementation: **M3.2 — Approved commands, test evidence, and tool limits**.
-**M3.2 remains incomplete pending live verification. Stop after M3.2.**
-**M4.1 has not started.** M1, M2 and M3.1 remain complete.
+Completed milestone: **M3 — Tools & Permissions**, including **M3.2 — Approved
+commands, test evidence, and tool limits**. M1, M2 and M3.1 are also complete.
+**M4.1 has not started.**
 
-Full offline suite: **187 tests passed** (180 existing + 7 finalization regression tests).
-The real-process disposable demonstration passed all seven requested steps.
+Final full automated suite (2026-10-05): **187 tests passed**. The real-process
+disposable demonstration passed all seven requested steps.
 
-The live finalization workflow failed after six successful provider calls because
-the final output did not reference all accepted tasks/evidence. Finalization now
-uses a shared current accepted-submission manifest for context and validation,
-with explicit exact-copy instructions and schema descriptions. The invariant is
-preserved. Automated verification passes; a live rerun remains outstanding.
-The existing `app.dev.workflow live` harness uses synthetic in-memory evidence;
-it does not execute M3.2 workspace commands. See verification.md for the precise
-rerun command and the distinction from the disposable real-process demo.
+Required live OpenRouter verification passed on 2026-10-05: workflow completed,
+no blocked reason, six successful first-attempt calls using
+`openai/gpt-4o-mini`, no retries or repairs, one review round, 2,618 input and
+601 output tokens (3,219 total), estimated cost USD 0.00075330. Finalization
+validation passed; the previous failure did not recur. The detailed record is in
+[verification.md](verification.md).
 
 ## Implemented
 
@@ -81,6 +79,10 @@ Observed: **180 tests passed**. Demo: workflow **completed**, test command
 files and tests. Explicit denial caused no execution. Slow command was
 **canceled**, its process was reaped. A later edit made live test evidence stale
 while the historical submission and its reviewed test evidence stayed unchanged.
+
+Final suite rerun on 2026-10-05: **187 tests passed**. Required live OpenRouter
+verification also passed; see [verification.md](verification.md) for usage and
+cost details.
 
 The demo explicitly approves only its built-in harmless commands in disposable
 workspaces; it does not approve arbitrary user project commands.

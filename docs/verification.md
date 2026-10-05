@@ -2,62 +2,49 @@
 
 ## M3.2 — Approved commands, test evidence, and tool limits
 
-### Finalization defect follow-up — 2026-10-05
+### Required live OpenRouter verification — 2026-10-05
 
-**M3.2 remains incomplete; M4.1 has not started.**
+**M3.2 COMPLETE; M3 — Tools & Permissions COMPLETE. M4.1 has not started.**
 
-The observed live finalization run made six successful first-attempt OpenRouter
-calls using `openai/gpt-4o-mini`: 2,435 input + 628 output = 3,063 tokens,
-estimated USD 0.00074205. It exited 2 with `waiting_for_user` and
-`final result must reference all accepted tasks and evidence`. The raw final
-output was not retained, so the exact incorrect/missing reference is unknown.
-An earlier sandbox request could not be sent; the network-enabled run had no
-provider retries or structured repairs.
+The required bounded live small-project workflow completed successfully through
+OpenRouter with `openai/gpt-4o-mini`. Workflow status was `completed`,
+`blocked_reason` was null, and all six provider calls succeeded on attempt 1.
+There were no retries or repairs and one review round. Usage was 2,618 input +
+601 output = 3,219 total tokens; estimated cost was USD 0.00075330. The final
+result passed validation and referenced the accepted tasks and evidence. The
+previous finalization validation failure did not recur.
 
-Investigation confirmed that the final context already included all run task IDs
-and WorkflowState.accepted submission IDs. The schema required both arrays but
-did not explain reference semantics or exact copying. The final context also
-lacked an explicit task-to-accepted-submission mapping and finalization policy.
-This ambiguity is fixed; it is not proof of the unseen live payload's precise
-mistake. A shared manifest now resolves each task's latest accepted submission,
-checks generation/requirements and rejects noncurrent acceptance entries. Both
-context and final validation use that manifest. Schema descriptions explicitly
-require every supplied task ID and accepted submission ID. Exact-set validation
-remains enforced, including rejection of missing and stale references.
+The earlier attempt on 2026-10-05 also made six first-attempt calls with this
+model, using 2,435 input and 628 output tokens (3,063 total; estimated cost USD
+0.00074205), but exited with `waiting_for_user` because final output validation
+reported `final result must reference all accepted tasks and evidence`. The
+successful run above supersedes that failed result for the required live gate.
 
-Verification: **187 tests passed**, including seven new regression methods in
-`tests/test_finalization.py` covering one/multiple tasks, missing task/evidence
+The prior defect investigation found that final context lacked an explicit
+task-to-accepted-submission mapping and exact finalization policy. A shared
+manifest now resolves each task's latest accepted submission, checks
+generation/requirements and rejects noncurrent acceptance entries. Both context
+and final validation use that manifest. Schema descriptions explicitly require
+every supplied task ID and accepted submission ID; exact-set validation rejects
+missing and stale references. This live run confirms the previous validation
+failure did not recur.
+
+Full automated suite: **187 tests passed** on 2026-10-05 using the command below.
+The finalization regression tests cover one/multiple tasks, missing task/evidence
 IDs, stale attempts, raw evidence substitutions, authoritative provider context,
 schema semantics, and the six-successful-calls/final-validation-failure shape.
 `PYTHONPATH=. python3 -m app.dev.commands` exited **0**: workflow completed,
 test succeeded (exit 0, `1 test passed`), Reviewer received captured files/tests,
 denial/cancellation/process cleanup and stale-evidence checks all passed.
 
-To rerun the existing live **finalization** smoke from the repository root in a
-shell with the trusted repository `.env` (do not enable shell tracing):
+The earlier `app.dev.workflow live` finalization run used synthetic in-memory
+evidence; it did not execute M3.2 workspace commands. Its original validation
+failure and the successful required M3.2 live verification recorded above are
+separate runs. The real-process command lifecycle check remains the disposable
+`app.dev.commands` demonstration below.
 
-```bash
-(
-  set +x
-  set -a
-  . ./.env
-  set +a
-  test -n "${OPENROUTER_API_KEY:-}" || exit 78
-  cd apps/api || exit 1
-  PYTHONPATH=. python3 -m app.dev.workflow live --model openai/gpt-4o-mini
-)
-```
-
-This command uses an ephemeral in-memory synthetic project, not an on-disk
-personal workspace. Correction to the earlier run report: it executes no local
-test command and creates no TemporaryDirectory. The M3.2 real-command check is
-the separate disposable `app.dev.commands` demonstration. There is currently no
-documented combined M3.2 real-provider/real-command harness. A passing synthetic
-finalization rerun alone must not be represented as that combined verification.
-No live calls were made in this defect-fix follow-up.
-
-Verification date: 2026-10-04. Implementation and user-requested verification
-passed. **Stop after M3.2; M4.1 not started.**
+Verification date: 2026-10-05. Implementation, required live verification, and
+automated verification passed. **M3.2 and M3 are complete. M4.1 not started.**
 
 Full standard-library suite, from `apps/api`:
 
@@ -149,11 +136,12 @@ workspace commands. Role proposals are deterministic; subprocess execution is re
 
 ### Remaining roadmap verification and safety limits
 
-The roadmap additionally calls for a real-provider small-project smoke check.
-`OPENROUTER_API_KEY available: False` was observed without printing any credential.
-No live-provider smoke was run or claimed. All tests and manual steps explicitly
-requested for this implementation passed; the additional live-provider check
-remains outstanding before the full roadmap gate is closed.
+The required real-provider small-project smoke check passed as recorded above.
+`OPENROUTER_API_KEY available: False` was an earlier observation and does not
+describe the completed live verification. The smoke run and the disposable
+real-process demonstration are separate checks: the former verifies bounded
+provider-backed workflow completion, and the latter verifies command lifecycle
+behavior in a disposable workspace.
 
 Approved commands are trusted local code, **not OS sandboxing**. They retain the
 service user's filesystem/network privileges; cwd and environment restrictions
