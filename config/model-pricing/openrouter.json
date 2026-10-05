@@ -1,0 +1,17 @@
+{
+  "version": "2026-10-04",
+  "source": "https://openrouter.ai/openai/gpt-4o-mini/providers",
+  "currency": "USD",
+  "models": {
+    "openai/gpt-4o-mini": {
+      "input_usd_per_million": "0.15",
+      "cached_input_usd_per_million": "0.075",
+      "output_usd_per_million": "0.60"
+    },
+    "openai/gpt-4o-mini-2024-07-18": {
+      "input_usd_per_million": "0.15",
+      "cached_input_usd_per_million": "0.075",
+      "output_usd_per_million": "0.60"
+    }
+  }
+}
