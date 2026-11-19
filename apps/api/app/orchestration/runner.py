@@ -1,18 +1,20 @@
 """Sequential bounded workflow. Providers return proposals; reducers commit facts."""
 from dataclasses import replace
+from datetime import datetime, timezone
+import json
 from uuid import uuid4
 from pathlib import Path
 from app.agents.contracts import (
     DecisionAction, DeveloperSubmission, FileReference, ManagerPlan, ReviewReference,
     ReviewVerdict, SubmissionReference, TaskBrief, TaskSummary,
 )
-from app.agents.runtime import AgentRuntime, InvocationError
+from app.agents.runtime import AgentRuntime, InvocationError, AgentExecutionSuspended
 from app.context.builder import ProjectContext
 from app.domain.agents import AgentKind, default_agent_definitions
 from app.domain.projects import RunStatus
 from app.domain.events import DomainEvent
 from app.domain.tasks import Task, TaskStatus
-from app.domain.workflow import WorkflowState, InvocationRecord
+from app.domain.workflow import WorkflowState, InvocationRecord, ToolContinuation
 from app.domain.recovery import (ExecutionOperation, OperationStage, OutcomeCertainty, checkpoint, retain_calls)
 from app.domain.submissions import TaskAttempt, SubmissionManifest
 from app.domain.reviews import ReviewRound, RevisionBrief
@@ -22,6 +24,7 @@ from app.orchestration.planning import validate_manager_plan
 from app.tools.contracts import ToolRequest
 from app.tools.memory import InMemoryToolGateway
 from app.tools.gateway import FileToolRequest, WorkspaceToolGateway
+from app.agents.langchain_layer import DeveloperToolAdapter
 
 
 class BoundaryStopped(InvocationError):
@@ -70,7 +73,8 @@ class WorkflowRunner:
             cp = replace(cp, project_id=self.project_id, run_id=self.run_id, phase=r.phase,
                          requirement_version=project.requirement_version, recovery_epoch=self._gateway_epoch,
                          task_id=attempt.task_id if attempt else r.current_task_id,
-                         invocation_id=r.workflow.pending if r.workflow and r.workflow.pending and r.workflow.pending.startswith('op_') else None,
+                         invocation_id=(getattr(self, '_command_invocation_id', None) or
+                             (r.workflow.pending if r.workflow and r.workflow.pending and r.workflow.pending.startswith('op_') else None)),
                          safe_phase=r.workflow.checkpoint.safe_phase if r.workflow and r.workflow.checkpoint else r.phase,
                          last_safe_boundary=r.workflow.checkpoint.last_safe_boundary if r.workflow and r.workflow.checkpoint else 'workflow.initialized')
             operation = replace(operation, checkpoint=cp)
@@ -82,7 +86,7 @@ class WorkflowRunner:
         return not self.store.needs_recovery(self.project_id, self.run_id) and not (
             r.workflow and r.workflow.recovery and r.workflow.recovery.requires_resume)
 
-    def request_command(self, request):
+    def request_command(self, request, *, invocation_id=None, continuation_id=None):
         """Developer asks; only controls.resolve_command can supply human approval."""
         gateway = self.workspace_gateway
         if not self._execution_gate():
@@ -92,33 +96,53 @@ class WorkflowRunner:
         results, errors = [], []
         def apply(p):
             r = p.run(self.run_id)
-            if r.workflow.pending:
+            event_type = 'command.permission_requested'
+            payload_continuation = None
+            seed = next((c for c in r.workflow.tool_continuations
+                         if continuation_id and c.id == continuation_id), None)
+            if (r.workflow.pending and r.workflow.pending != invocation_id) or (
+                    invocation_id and (r.workflow.pending != invocation_id or r.status is not RunStatus.RUNNING
+                    or r.execution_generation != request.generation or not seed
+                    or seed.state != 'REQUESTING_APPROVAL' or seed.attempt_id != request.attempt_id)):
                 gateway._command_record('request', request, None, 'denied', 'operation already pending')
                 errors.append(ValueError('operation already pending'))
             else:
                 try:
                     approval = gateway.request_command(request)
                     results.append(approval)
-                    r = replace(r, workflow=replace(r.workflow,
-                        pending_permissions=(*r.workflow.pending_permissions, approval.id)))
+                    wf = replace(r.workflow, pending_permissions=(*r.workflow.pending_permissions, approval.id))
+                    status = r.status
+                    if seed is not None:
+                        audit = gateway.command_records[-1]
+                        now = datetime.now(timezone.utc).isoformat()
+                        changed = replace(seed, tool_request_id=audit.id, permission_id=approval.id,
+                            state='WAITING_FOR_APPROVAL', updated_at=now)
+                        wf = replace(wf, pending=None, blocked_reason=None, resume_phase='develop',
+                            tool_continuations=tuple(changed if c.id == seed.id else c
+                                                     for c in wf.tool_continuations))
+                        status, event_type = RunStatus.WAITING_FOR_USER, 'developer.waiting_for_approval'
+                        payload_continuation = changed.id
+                    r = replace(r, workflow=wf, status=status)
                 except ValueError as exc:
                     errors.append(exc)
             record = gateway.command_records[-1]
-            return commit_run(p, r, 'command.permission_requested', payload={
-                'tool_call_id': record.id, 'approval_id': record.approval_id, 'outcome': record.outcome})
+            payload = {'tool_call_id': record.id, 'approval_id': record.approval_id, 'outcome': record.outcome}
+            if payload_continuation:
+                payload['continuation_id'] = payload_continuation
+            return commit_run(p, r, event_type, payload=payload)
         self.store.atomic_update(self.project_id, apply)
         if errors:
             raise errors[0]
         return results[0]
 
-    def command_tool(self, request, approval_id):
+    def command_tool(self, request, approval_id, *, operation_id=None):
         """Launch under the control lock, drain outside it, then retain every result."""
         gateway = self.workspace_gateway
         if not self._execution_gate():
             raise ValueError('restart requires reconciliation and explicit resume')
         if gateway is None:
             raise ValueError('no workspace gateway configured')
-        token = 'command_op_' + uuid4().hex
+        token = operation_id or 'op_' + uuid4().hex
         command_epoch = self.run.workflow.recovery_epoch
         running, errors = [], []
         def reserve(p):
@@ -128,10 +152,13 @@ class WorkflowRunner:
                 errors.append(ValueError('pending operation/permission or command limit'))
             else:
                 try:
-                    running.append(gateway.start_command(request, approval_id))
+                    self._command_invocation_id = token
+                    running.append(gateway.start_command(request, approval_id, operation_id=token))
                     r = replace(r, workflow=replace(r.workflow, pending=token))
                 except ValueError as exc:
                     errors.append(exc)
+                finally:
+                    self._command_invocation_id = None
             record = gateway.command_records[-1]
             return commit_run(p, r, 'command.launch', payload={
                 'operation_id': token, 'tool_call_id': record.id, 'approval_id': approval_id, 'outcome': record.outcome})
@@ -267,15 +294,46 @@ class WorkflowRunner:
         if self.workspace_gateway and self._execution_gate():
             self.workspace_gateway.restore(self.store.operations(self.project_id, self.run_id),
                 self.store.approvals(self.project_id, self.run_id), self.run, self.store.tool_history(self.project_id, self.run_id))
+        current = self.run
+        if current.status is RunStatus.PAUSED:
+            return False
+        waiting = next((c for c in reversed(current.workflow.tool_continuations)
+                        if c.state == 'APPROVED_PENDING_EXECUTION'), None) if current.workflow else None
+        if waiting is not None:
+            return self._execute_tool_continuation(waiting)
         token = 'op_' + uuid4().hex
         reserved = []
+        resumed = []
         def reserve(p):
+            nonlocal token
             r = p.run(self.run_id)
             wf = r.workflow
             if wf is None:
                 raise ValueError('initialize workflow first')
             if not self._execution_gate() or wf.pending or wf.pending_permissions or r.status not in {RunStatus.DRAFT, RunStatus.PLANNING, RunStatus.RUNNING}:
                 raise _NoOperation
+            continuation = next((c for c in reversed(wf.tool_continuations)
+                                 if c.state == 'TOOL_COMPLETED'), None)
+            if continuation is not None:
+                if (continuation.generation != r.execution_generation or continuation.task_id != r.current_task_id
+                        or not r.approved or p.task(continuation.task_id).status is not TaskStatus.IN_PROGRESS
+                        or not any(a.id == continuation.attempt_id and a.task_id == continuation.task_id
+                                   for a in wf.attempts)
+                        or not any(i.id == continuation.invocation_id and i.generation == continuation.generation
+                                   and i.agent_id == continuation.agent_id for i in wf.invocation_records)):
+                    updated = replace(continuation, state='STALE', updated_at=datetime.now(timezone.utc).isoformat())
+                    values = tuple(updated if c.id == updated.id else c for c in wf.tool_continuations)
+                    return commit_run(p, replace(r, workflow=replace(wf, tool_continuations=values)),
+                                      'developer.continuation_stale', payload={'continuation_id': updated.id})
+                token = continuation.invocation_id
+                updated = replace(continuation, state='RUNNING', updated_at=datetime.now(timezone.utc).isoformat())
+                wf = replace(wf, tool_continuations=tuple(updated if c.id == updated.id else c
+                                                         for c in wf.tool_continuations), pending=token)
+                r = replace(r, workflow=wf, phase='develop')
+                resumed.append(updated)
+                reserved.append((p, r))
+                return commit_run(p, r, 'developer.continuation_resumed', payload={
+                    'continuation_id': updated.id, 'invocation_id': token})
             if wf.iterations >= wf.limits.max_iterations:
                 return block_state(p, r, 'workflow iteration limit reached', exhausted_limit=True)
             phase = 'assign' if r.phase == 'execution' else r.phase
@@ -309,10 +367,11 @@ class WorkflowRunner:
         if not reserved:
             return False
         project, run = reserved[0]
+        continuation = resumed[0] if resumed else None
         generation = run.execution_generation
         epoch = run.workflow.recovery_epoch
         requirement_version = project.requirement_version
-        calls = 0
+        calls = continuation.provider_calls if continuation else 0
         def before_call():
             nonlocal calls
             def charge(p):
@@ -323,7 +382,15 @@ class WorkflowRunner:
                     raise BoundaryStopped('operation stopped at safe boundary')
                 if calls >= wf.limits.max_calls_per_invocation or wf.llm_calls >= wf.limits.max_llm_calls:
                     raise BudgetStopped('LLM call limit reached')
-                return commit_run(p, replace(r, workflow=replace(wf, llm_calls=wf.llm_calls + 1)),
+                updated_wf = replace(wf, llm_calls=wf.llm_calls + 1)
+                if continuation is not None:
+                    current = next((c for c in updated_wf.tool_continuations if c.id == continuation.id), None)
+                    if current is not None:
+                        changed = replace(current, provider_calls=calls + 1,
+                            updated_at=datetime.now(timezone.utc).isoformat())
+                        updated_wf = replace(updated_wf, tool_continuations=tuple(
+                            changed if c.id == changed.id else c for c in updated_wf.tool_continuations))
+                return commit_run(p, replace(r, workflow=updated_wf),
                                   'provider.call_reserved', payload={'operation_id': token})
             self.store.atomic_update(self.project_id, charge)
             calls += 1
@@ -344,6 +411,77 @@ class WorkflowRunner:
             certainty = OutcomeCertainty.CONFIRMED_SUCCESS if record.status == 'succeeded' else OutcomeCertainty.CONFIRMED_FAILURE
             self.store.record_operation(op.evolve(stage=OperationStage.SETTLED, certainty=certainty,
                                                  call_record=record, proposal=output))
+        approval_seed = {}
+        def tool_call_started(name, arguments, number, context_value, provider_request_id,
+                              provider_call_number, retry_attempts):
+            if continuation is None:
+                if name != 'run_approved_command':
+                    return
+                encoded_context = json.dumps(context_value, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+                encoded_arguments = json.dumps(arguments, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+                now = datetime.now(timezone.utc).isoformat()
+                attempt = next((a for a in reversed(run.workflow.attempts) if a.task_id == run.current_task_id), None)
+                if attempt is None or len(encoded_context) > agent.context_policy.max_chars:
+                    raise BoundaryStopped('approval tool has no bounded active continuation context')
+                seed = ToolContinuation(id='continuation_' + uuid4().hex, run_id=run.id,
+                    task_id=run.current_task_id, attempt_id=attempt.id, invocation_id=token,
+                    agent_id=agent.id, generation=generation,
+                    tool_request_id=f'{token}:tool:{number}', operation_id='op_' + uuid4().hex,
+                    tool_name=name, arguments_json=encoded_arguments, permission_id='',
+                    state='REQUESTING_APPROVAL', context_json=encoded_context,
+                    prior_results_json=json.dumps(context_value.get('tool_results', []), sort_keys=True,
+                        separators=(',', ':'), ensure_ascii=False),
+                    provider_request_id=provider_request_id,
+                    provider_calls=provider_call_number, tool_calls=number,
+                    retry_attempts=retry_attempts, result_json=None,
+                    created_at=now, updated_at=now)
+                def create(p):
+                    r = p.run(self.run_id)
+                    wf = r.workflow
+                    if (r.execution_generation != generation or wf.pending != token
+                            or r.status is not RunStatus.RUNNING or not any(a.id == attempt.id for a in wf.attempts)):
+                        raise BoundaryStopped('stale approval continuation request')
+                    return commit_run(p, replace(r, workflow=replace(wf,
+                        tool_continuations=(*wf.tool_continuations, seed))),
+                        'developer.continuation_prepared', payload={'continuation_id': seed.id,
+                            'invocation_id': token, 'tool_request_id': seed.tool_request_id})
+                self.store.atomic_update(self.project_id, create)
+                approval_seed['id'] = seed.id
+                return
+            def apply(p):
+                r = p.run(self.run_id)
+                wf = r.workflow
+                current = next((c for c in wf.tool_continuations if c.id == continuation.id), None)
+                if current is None or current.state != 'RUNNING' or r.execution_generation != generation:
+                    raise BoundaryStopped('stale tool continuation')
+                changed = replace(current, tool_calls=number,
+                    provider_request_id=provider_request_id,
+                    provider_calls=provider_call_number, retry_attempts=retry_attempts,
+                    updated_at=datetime.now(timezone.utc).isoformat())
+                wf = replace(wf, tool_continuations=tuple(changed if c.id == changed.id else c
+                                                          for c in wf.tool_continuations))
+                return commit_run(p, replace(r, workflow=wf), 'developer.tool_call_started', payload={
+                    'continuation_id': changed.id, 'tool_name': name, 'tool_call_number': number})
+            self.store.atomic_update(self.project_id, apply)
+        def tool_result_saved(context_value):
+            if continuation is None:
+                return
+            encoded_context = json.dumps(context_value, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+            if len(encoded_context) > agent.context_policy.max_chars:
+                raise BoundaryStopped('continued tool context exceeds configured context budget')
+            def apply(p):
+                r = p.run(self.run_id)
+                wf = r.workflow
+                current = next((c for c in wf.tool_continuations if c.id == continuation.id), None)
+                if current is None or current.state != 'RUNNING' or r.execution_generation != generation:
+                    raise BoundaryStopped('stale tool continuation')
+                changed = replace(current, context_json=encoded_context, result_json=None,
+                                  updated_at=datetime.now(timezone.utc).isoformat())
+                wf = replace(wf, tool_continuations=tuple(changed if c.id == changed.id else c
+                                                          for c in wf.tool_continuations))
+                return commit_run(p, replace(r, workflow=wf), 'developer.tool_result_saved', payload={
+                    'continuation_id': changed.id})
+            self.store.atomic_update(self.project_id, apply)
         result = None
         failure = None
         try:
@@ -351,12 +489,44 @@ class WorkflowRunner:
             agent = self.definitions[kind]
             if dict(run.config_snapshot).get(kind.value) != agent.snapshot().config_digest:
                 raise ValueError('configuration generation does not match agent snapshot')
+            lc_tools = ()
+            if (kind is AgentKind.DEVELOPER and self.workspace_gateway
+                    and getattr(getattr(self.provider, "capabilities", None), "tools", False)):
+                attempt = run.workflow.attempts[-1]
+                def before_tool():
+                    current = self.run
+                    if (current.execution_generation != generation
+                            or current.workflow.recovery_epoch != epoch
+                            or current.workflow.pending != token
+                            or current.status not in {RunStatus.DRAFT, RunStatus.PLANNING, RunStatus.RUNNING}):
+                        raise BoundaryStopped('tool operation stopped at safe boundary')
+                lc_tools = DeveloperToolAdapter(self.workspace_gateway, attempt.id, generation,
+                    before_tool=before_tool,
+                    request_command=lambda request: self.request_command(request, invocation_id=token,
+                                                                         continuation_id=approval_seed.get('id'))).tools()
+            initial_context = None
+            if continuation is not None:
+                initial_context = json.loads(continuation.context_json)
+                if continuation.result_json is not None:
+                    existing_results = list(initial_context.get('tool_results', []))
+                    existing_results.append({'tool_call_id': continuation.tool_name,
+                                             'result': json.loads(continuation.result_json)})
+                    initial_context = {**initial_context, 'tool_results': existing_results}
             result = self.runtime.invoke(agent, context, self.provider,
                 invocation_id=token, output_schema=schema, workflow_context=extra,
                 source_versions={'requirements': str(project.requirement_version), 'generation': str(generation),
                                  'run': str(run.version)},
-                before_call=before_call, on_call_started=call_started, on_call_finished=call_finished, max_attempts=run.workflow.limits.max_provider_attempts,
-                max_repairs=run.workflow.limits.max_repairs)
+                before_call=before_call, on_call_started=call_started, on_call_finished=call_finished,
+                max_attempts=(max(1, run.workflow.limits.max_provider_attempts - continuation.retry_attempts)
+                              if continuation else run.workflow.limits.max_provider_attempts),
+                max_repairs=run.workflow.limits.max_repairs,
+                langchain_tools=lc_tools,
+                max_tool_calls=8,
+                initial_context=initial_context,
+                call_number_offset=continuation.provider_calls if continuation else 0,
+                tool_call_offset=continuation.tool_calls if continuation else 0,
+                on_tool_call=tool_call_started,
+                on_tool_result=tool_result_saved if continuation else None)
         except (InvocationError, ValueError) as exc:
             failure = exc
         records = result.call_records if result else getattr(failure, 'call_records', ())
@@ -368,8 +538,34 @@ class WorkflowRunner:
                     or wf.pending != token or not r.active or r.status is RunStatus.WAITING_FOR_USER):
                 if wf.pending == token:
                     r = replace(r, workflow=replace(wf, pending=None))
+                if isinstance(failure, AgentExecutionSuspended) and r.status is RunStatus.WAITING_FOR_USER:
+                    saved = next((c for c in r.workflow.tool_continuations
+                                  if c.invocation_id == token and c.permission_id == failure.approval_id
+                                  and c.state == 'WAITING_FOR_APPROVAL'), None)
+                    if saved is not None:
+                        now = datetime.now(timezone.utc).isoformat()
+                        confirmed = replace(saved,
+                            tool_request_id=failure.tool_request_id,
+                            provider_request_id=failure.provider_request_id,
+                            provider_calls=max(saved.provider_calls, failure.provider_calls),
+                            tool_calls=max(saved.tool_calls, failure.tool_calls),
+                            retry_attempts=max(saved.retry_attempts, failure.retry_attempts),
+                            updated_at=now)
+                        wf = replace(r.workflow, tool_continuations=tuple(
+                            confirmed if c.id == confirmed.id else c for c in r.workflow.tool_continuations))
+                        r = replace(r, workflow=wf)
+                        return commit_run(p, r, 'developer.approval_boundary_settled', payload={
+                            'continuation_id': confirmed.id, 'invocation_id': token,
+                            'call_records': len(records)})
+                if continuation is not None:
+                    current = next((c for c in r.workflow.tool_continuations if c.id == continuation.id), None)
+                    if current and current.state == 'RUNNING':
+                        stale = replace(current, state='STALE', updated_at=datetime.now(timezone.utc).isoformat())
+                        values = tuple(stale if c.id == stale.id else c for c in r.workflow.tool_continuations)
+                        r = replace(r, workflow=replace(r.workflow, tool_continuations=values))
                 return commit_run(p, r, 'operation.stale_ignored', payload={'operation_id': token, 'calls': len(records)})
-            r = replace(r, workflow=replace(wf, pending=None))
+            wf = replace(wf, pending=None)
+            r = replace(r, workflow=wf)
             pause = r.status is RunStatus.PAUSE_REQUESTED
             if pause and self.workspace_gateway and r.phase == 'develop':
                 # File capture is a mutation too. Retry this phase on resume,
@@ -378,9 +574,56 @@ class WorkflowRunner:
             if isinstance(failure, BoundaryStopped) and pause:
                 return commit_run(p, replace(r, status=RunStatus.PAUSED), 'run.paused')
             if failure is not None:
+                if isinstance(failure, AgentExecutionSuspended):
+                    existing = next((c for c in wf.tool_continuations
+                                     if c.invocation_id == token and c.state not in {'COMPLETED', 'CANCELED', 'STALE'}), None)
+                    continuation_id = existing.id if existing else 'continuation_' + uuid4().hex
+                    operation_id = 'op_' + uuid4().hex
+                    now = datetime.now(timezone.utc).isoformat()
+                    attempt = next((a for a in reversed(wf.attempts) if a.task_id == r.current_task_id), None)
+                    if attempt is None:
+                        return block_state(p, r, 'approval continuation has no active task attempt')
+                    context_json = json.dumps(failure.context, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+                    arguments_json = json.dumps(failure.tool_call['arguments'], sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+                    prior_results = json.dumps(failure.context.get('tool_results', []), sort_keys=True,
+                                               separators=(',', ':'), ensure_ascii=False)
+                    cont_record = ToolContinuation(
+                        id=continuation_id, run_id=r.id, task_id=r.current_task_id, attempt_id=attempt.id,
+                        invocation_id=token, agent_id=agent.id, generation=generation,
+                        tool_request_id=failure.tool_request_id, operation_id=operation_id,
+                        tool_name=failure.tool_call['name'], arguments_json=arguments_json,
+                        permission_id=failure.approval_id, state='WAITING_FOR_APPROVAL',
+                        context_json=context_json, prior_results_json=prior_results,
+                        provider_request_id=failure.provider_request_id, provider_calls=failure.provider_calls,
+                        tool_calls=failure.tool_calls,
+                        retry_attempts=(existing.retry_attempts if existing else 0) + failure.retry_attempts,
+                        result_json=None,
+                        created_at=existing.created_at if existing else now, updated_at=now)
+                    items = tuple(c for c in wf.tool_continuations if c.id != continuation_id)
+                    wf = replace(wf, pending=None, tool_continuations=(*items, cont_record))
+                    waiting = replace(r, workflow=replace(wf, resume_phase='develop'),
+                                      status=RunStatus.WAITING_FOR_USER)
+                    return commit_run(p, waiting, 'developer.waiting_for_approval', payload={
+                        'continuation_id': cont_record.id, 'invocation_id': token,
+                        'tool_request_id': cont_record.tool_request_id,
+                        'approval_id': cont_record.permission_id})
+                if continuation is not None:
+                    current = next((c for c in wf.tool_continuations if c.id == continuation.id), None)
+                    if current:
+                        failed = replace(current, state='FAILED', updated_at=datetime.now(timezone.utc).isoformat())
+                        wf = replace(wf, tool_continuations=tuple(failed if c.id == failed.id else c
+                                                                  for c in wf.tool_continuations))
+                        r = replace(r, workflow=wf)
                 return block_state(p, r, f'technical failure: {failure}', exhausted_limit=isinstance(failure, BudgetStopped))
             if pause:
                 r = replace(r, status=RunStatus.RUNNING)
+            if continuation is not None:
+                current = next((c for c in wf.tool_continuations if c.id == continuation.id), None)
+                if current:
+                    completed = replace(current, state='COMPLETED', updated_at=datetime.now(timezone.utc).isoformat())
+                    wf = replace(wf, tool_continuations=tuple(completed if c.id == completed.id else c
+                                                              for c in wf.tool_continuations))
+                    r = replace(r, workflow=wf)
             try:
                 after, events = self._apply(p, r, result.output)
             except ValueError as exc:
@@ -396,6 +639,84 @@ class WorkflowRunner:
                 run_id=run.id, task_id=run.current_task_id, correlation_id=token) for record in records)
             return after, (*events, *usage_events)
         self.store.atomic_update(self.project_id, finish_with_usage)
+        return True
+
+    def _execute_tool_continuation(self, continuation):
+        """Run the approved command at a fresh application boundary, then persist its receipt."""
+        project = self.store.get_project(self.project_id)
+        run = project.run(self.run_id)
+        wf = run.workflow
+        approval = next((a for a in self.store.approvals(self.project_id, self.run_id)
+                         if a.id == continuation.permission_id), None)
+        operations = self.store.operations(self.project_id, self.run_id)
+        operation = next((o for o in operations if o.id == continuation.operation_id), None)
+        attempt = next((a for a in wf.attempts if a.id == continuation.attempt_id), None)
+        invocation = next((i for i in wf.invocation_records if i.id == continuation.invocation_id), None)
+        task = next((t for t in project.tasks if t.id == continuation.task_id), None)
+        valid = bool(self._execution_gate() and run.status is RunStatus.RUNNING
+            and run.approved and task and task.status is TaskStatus.IN_PROGRESS
+            and run.execution_generation == continuation.generation
+            and run.current_task_id == continuation.task_id and task and task.status is TaskStatus.IN_PROGRESS
+            and attempt and attempt.task_id == continuation.task_id and invocation
+            and invocation.generation == continuation.generation and invocation.agent_id == continuation.agent_id
+            and approval and (approval.status == 'approved' or
+                              (approval.status == 'consumed' and operation is not None))
+            and approval.request.attempt_id == continuation.attempt_id
+            and approval.request.generation == continuation.generation
+            and approval.request.profile == json.loads(continuation.arguments_json).get('profile'))
+        if not valid:
+            def stale(p):
+                r = p.run(self.run_id)
+                current = next((c for c in r.workflow.tool_continuations if c.id == continuation.id), continuation)
+                updated = replace(current, state='STALE', updated_at=datetime.now(timezone.utc).isoformat())
+                values = tuple(updated if c.id == updated.id else c for c in r.workflow.tool_continuations)
+                return commit_run(p, replace(r, workflow=replace(r.workflow, tool_continuations=values)),
+                    'developer.continuation_stale', payload={'continuation_id': updated.id})
+            self.store.atomic_update(self.project_id, stale)
+            return True
+
+        if operation is not None and operation.stage is OperationStage.SETTLED:
+            if operation.result is None:
+                return self._fail_uncertain_continuation(continuation, 'settled command has no durable result')
+            result = operation.result
+        elif operation is not None and operation.stage is OperationStage.EXECUTING:
+            return self._fail_uncertain_continuation(continuation,
+                'command execution crossed its durable start fence; recovery must reconcile the outcome')
+        else:
+            result = self.command_tool(approval.request, continuation.permission_id,
+                                       operation_id=continuation.operation_id)
+
+        evidence = self.workspace_gateway.test_evidence(continuation.attempt_id,
+            continuation.generation) if result.is_test else ()
+        receipt = {'outcome': result.outcome, 'command': result.to_dict(),
+                   'test_evidence': [item.to_dict() for item in evidence]}
+        encoded = json.dumps(receipt, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+        def finish(p):
+            r = p.run(self.run_id)
+            current = next((c for c in r.workflow.tool_continuations if c.id == continuation.id), None)
+            if current is None or r.execution_generation != continuation.generation:
+                return p
+            updated = replace(current, state='TOOL_COMPLETED', result_json=encoded,
+                              updated_at=datetime.now(timezone.utc).isoformat())
+            values = tuple(updated if c.id == updated.id else c for c in r.workflow.tool_continuations)
+            return commit_run(p, replace(r, workflow=replace(r.workflow, tool_continuations=values)),
+                'developer.tool_continuation_completed', payload={'continuation_id': updated.id,
+                    'operation_id': updated.operation_id, 'command_id': result.id,
+                    'outcome': result.outcome, 'is_test': result.is_test})
+        self.store.atomic_update(self.project_id, finish)
+        return True
+
+    def _fail_uncertain_continuation(self, continuation, reason):
+        def fail(p):
+            r = p.run(self.run_id)
+            current = next((c for c in r.workflow.tool_continuations if c.id == continuation.id), continuation)
+            updated = replace(current, state='FAILED', updated_at=datetime.now(timezone.utc).isoformat())
+            values = tuple(updated if c.id == updated.id else c for c in r.workflow.tool_continuations)
+            r = replace(r, workflow=replace(r.workflow, tool_continuations=values,
+                blocked_reason=reason, resume_phase='develop'), status=RunStatus.WAITING_FOR_USER)
+            return commit_run(p, r, 'developer.tool_continuation_uncertain', payload={
+                'continuation_id': updated.id, 'operation_id': updated.operation_id, 'reason': reason})
+        self.store.atomic_update(self.project_id, fail)
         return True
 
     @staticmethod

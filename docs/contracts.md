@@ -1,6 +1,70 @@
 # AI Office contracts
 
-Current contract owner: M3.2 approved commands and version-bound test evidence, preserving M1/M2/M3.1 contracts.
+Current contract baseline: completed M1–M6. M6's production Office Experience,
+Pixel Office, Agent Inspector, pop-out/fullscreen, and integration are frozen.
+M7 — Agent Runtime Modernization & Production Hardening is In Progress; M7.1 is complete and M7.2 has not started.
+The [roadmap](IMPLEMENTATION_MILESTONES.md) defines migration constraints.
+Current M7.1 adds `DeveloperToolAdapter` (`app/agents/langchain_layer.py`), which
+binds LangChain tools to a single Developer attempt/generation and delegates file
+operations and configured command/test profile requests to `WorkspaceToolGateway`.
+`AgentRuntime` executes declared tool calls with a bounded count and records each
+provider request through its existing call record callbacks. OpenRouter advertises
+native tool support. The command adapter accepts only a configured profile name;
+argv, executable, cwd, environment, timeout, and output bounds remain application
+owned. Manager and
+Reviewer retain their existing provider structured-output and domain validation
+boundaries; wrapping these calls in LangChain would add no behavior or safety
+benefit in M7.1. These additions do not change domain contracts. LangChain/LangGraph must preserve domain and
+SQLite ownership, mandatory Permission Gateway enforcement, immutable evidence,
+exact-submission reviews, accounting, idempotency, and explicit recovery.
+Graph checkpoints, if introduced, hold execution/resume state only. Runtime
+traces must be real and redacted and must not expose hidden chain-of-thought.
+
+### M7.1 command/test continuation
+
+`WorkflowState.tool_continuations` stores application-owned `ToolContinuation`
+records in the durable run row. A `REQUESTING_APPROVAL` seed is committed before
+the existing gateway creates its durable intervention. Recovery matches that seed
+to the exact persisted permission request and audit receipt, then reconstructs
+`WAITING_FOR_APPROVAL` (or the already-decided state) if a crash happened before
+the workflow approval commit. A record binds run/task/attempt/invocation/agent,
+execution generation, configured profile request, existing permission ID, stable
+command operation ID, provider request reference, explicit tool-loop context,
+tool/provider/retry counters, and state. It contains normalized JSON strings only;
+it never stores a Python coroutine or LangChain object. Run snapshots expose the
+continuation metadata but omit retained context, arguments, and tool output.
+
+The command tool only creates the existing `CommandApproval`. The runtime marks
+the provider response as a successful, accounted model request, raises a distinct
+`WAITING_FOR_APPROVAL` control transfer, and returns from the synchronous runner.
+The runner commits the continuation and enters `waiting_for_user`; it does not
+run another model request or command while approval is pending. Approval or denial
+updates the existing intervention and continuation. An approval is executed on a
+fresh worker step; denial becomes a structured tool result and can resume the
+bounded Developer loop. The same invocation ID and monotonically increasing call
+numbers are retained across the boundary.
+
+Before execution, the runner verifies the exact approval/profile/request,
+generation, current task, active attempt, invocation snapshot, workflow approval,
+and recovery gate. A stable `op_` operation ID binds the command to its prepared
+and executing receipts. A prepared command fence proves the start boundary was
+not crossed, so the same approved operation may resume. Once the executing fence
+is durable, a restart treats an absent result as uncertain and recovery never
+replays it. An operator may reconcile the command, but the Developer continuation
+cannot invent stdout, exit status, or test evidence for an uncertain result.
+Successful test results use the existing version-bound `TestEvidence`; captured
+submissions remain authoritative.
+
+Cancellation and scope/generation changes invalidate pending continuations and
+approvals. Duplicate decisions are idempotent; operation identity and the durable
+start fence prevent a second launch. If a crash occurs after a later file tool
+starts but before its result is checkpointed, recovery blocks that continuation
+for intervention rather than replaying the tool. Provider usage continues to be
+recorded once by `AgentRuntime`; waiting does not create an additional model call.
+
+Milestone-specific sections below retain their historical scope. In particular,
+earlier visual asset descriptions are records of those passes, not instructions
+to replace the accepted Pixel Office or reopen M6.
 
 The implementation uses standard-library frozen dataclasses with strict
 `from_dict` parsers. Missing and unknown fields are rejected. `to_dict()` is
@@ -13,9 +77,9 @@ Owner: `apps/api/app/domain/agents.py`
 - `AgentKind` has exactly `MANAGER`, `DEVELOPER`, and `REVIEWER`.
 - `DEVELOPER` is the canonical name for the blueprint's initial Worker
   workflow position. The configurable `role` remains separate.
-- Default agent definitions have no tools or permissions. The runtime still
-  rejects non-empty provider tool configuration. File/command tools use a trusted
-  application-owned runner entrypoint; provider-native dispatch is not enabled.
+- Default agent definitions have no static tools or permissions. The runner
+  supplies a bounded Developer tool set only for providers declaring tool support;
+  every tool delegates through the trusted application-owned gateway.
 - `AgentDefinition.snapshot()` returns immutable configuration with a
   SHA-256 digest.
 
@@ -45,7 +109,7 @@ Owners: `apps/api/app/providers/base.py` and
 - Typed provider failures distinguish configuration, capability, transient,
   rate-limit, timeout, and response failures.
 - `UsageSnapshot` records total input, cached input, uncached input, output,
-  and total token counts. Cached input is a subset of total input.
+and total token counts. Cached input is a subset of total input.
 - `AgentRuntime` defaults to one call for M1.1 compatibility. M1.2 callers
   may set bounded transient attempts and bounded repair calls. Every submitted
   call receives a local request ID and an `LLMCallRecord`, including failures
@@ -53,7 +117,11 @@ Owners: `apps/api/app/providers/base.py` and
 - Failed calls may have unknown usage; zero is never fabricated for unknown
   usage. `AgentInvocation` exposes final validated output, per-call records,
   and aggregate estimated cost when pricing is known.
-- Tool calls remain rejected before execution.
+- Provider tool calls are rejected unless a Developer invocation explicitly
+  supplies its bounded LangChain tool set. Each currently supported file tool
+  delegates to `WorkspaceToolGateway`; its execution boundary is checked before
+  dispatch. The configured-profile command/test tool uses the durable approval
+  continuation described above.
 - M2.2 adds optional `output_schema`, bounded structured `workflow_context`, and
   `before_call` to `AgentRuntime.invoke`. Manager can request
   `manager_decision.v1` or `final_result.v1`; other roles retain their schemas.
@@ -76,8 +144,9 @@ Owner: `apps/api/app/providers/openrouter.py`
   IDs, structured JSON output, tool calls, and usage including cached tokens.
 - Structured-output requests send `provider.require_parameters: true` so
   OpenRouter routes only to endpoints that accept the required parameters.
-- The adapter has no tool definitions in M1.2. Any returned tool call is
-  normalized and rejected by the shared runtime.
+- During M7.1, OpenRouter serializes only the Developer tool schemas supplied by
+  the runner. The shared runtime rejects undeclared calls and enforces the tool
+  call bound; it does not add unrestricted shell access.
 
 ## Usage and pricing
 

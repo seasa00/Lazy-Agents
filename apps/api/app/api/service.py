@@ -137,16 +137,16 @@ class ControlService:
                 elif name in {'pause', 'cancel'}:
                     getattr(runner.controls, name)()
                 elif name == 'resume':
-                    recovery = runner.run.workflow.recovery
-                    if recovery and recovery.requires_resume:
-                        self.recovery.resume(project_id, rid, expected_epoch=body.expected_epoch)
-                    else:
-                        runner.controls.resume()
+                    runner.controls.resume(expected_epoch=body.expected_epoch)
                     self.queue.put((project_id, rid))
                 elif name == 'permission':
                     if body.approval_id is None or body.approved is None or not body.reason.strip():
                         raise ValueError('permission decision fields required')
                     runner.controls.resolve_command(body.approval_id, approved=body.approved, reason=body.reason)
+                    if any(c.permission_id == body.approval_id and c.state in {
+                            'APPROVED_PENDING_EXECUTION', 'TOOL_COMPLETED'}
+                           for c in runner.run.workflow.tool_continuations):
+                        self.queue.put((project_id, rid))
                 elif name == 'recovery':
                     self.recovery.resolve(project_id, rid, body.operation_id, action=body.action,
                         reason=body.reason, runner=runner, quiescent=body.quiescent, expected_epoch=body.expected_epoch)

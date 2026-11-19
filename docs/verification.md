@@ -1,5 +1,86 @@
 # AI Office verification record
 
+**Current official status:** M1–M6 complete; M6 frozen and closed, including the
+production Office Experience, approved Pixel Office, Agent Inspector,
+pop-out/fullscreen, and system integration. M7 — Agent Runtime Modernization & Production Hardening is **In Progress**. M7.1 is complete; M7.2–M7.6 have not started. See the [roadmap](IMPLEMENTATION_MILESTONES.md).
+
+Entries after the M7.1 section are historical verification records. Statements
+such as “M4.3 has not started,” earlier visual descriptions, and individual test
+counts apply to those recorded checkpoints, not the current project status.
+
+
+## M7.1 implementation verification — complete
+
+Dependency selection: `langchain-core>=1.8.2,<2`; uv resolved 1.8.2 for
+Python 3.11+. No LangGraph dependency or LangSmith integration is used; the
+`langsmith` distribution is an indirect `langchain-core` dependency. No LangSmith
+credentials, tracing, API calls, or project configuration are required. LangChain
+Core provides the Developer tool abstractions; the provider adapter remains
+responsible for model transport and `AgentRuntime` callbacks remain the sole
+usage/cost accounting path.
+
+New deterministic tests: `tests/test_m71.py` (7 passed) cover gateway-backed
+Developer file list/read/edit/write, protected-path denial and failure propagation,
+pre-tool execution boundary checks, bounded model→tool→model execution, validated
+Developer submission output, per-request call records/token usage, and tool-call
+budget exhaustion. `tests/test_m71_command_continuation.py` adds eleven deterministic
+command/test approval, resume, idempotency, stale, cancellation, restart, and crash
+boundary tests, including a SQLite restart after the intervention is durable but
+before its workflow approval commit. Startup reconstructs the approval from the
+pre-request continuation seed and exact persisted permission audit.
+
+The first regression run exposed workspace scenarios failing because scripted
+test providers do not advertise tool support. The runner now enables LangChain
+tools only for Developer invocations whose provider explicitly advertises tool
+support; the rerun passed. This preserves the scripted-provider behavior.
+
+The verification command must use the project environment. Running the system
+Python (`PYTHONPATH=apps/api python3 -m unittest discover -s apps/api/tests -q`)
+failed test discovery because that interpreter has neither `langchain_core` nor
+FastAPI installed. With the repository environment, the full suite passed:
+
+```bash
+PYTHONPATH=apps/api apps/api/.venv/bin/python -m unittest discover -s apps/api/tests -q
+```
+
+The original M7.1 file-tool checkpoint passed **465 tests**. The initial durable
+command/test continuation checkpoint passed 144 focused tests and 475 tests in
+the full backend suite. After adding the intervention/workflow-commit crash
+boundary, the focused groups passed **145 tests** (including permission, recovery,
+runtime, API service and M7.1 tests) and the full backend suite passed **476 tests**:
+
+```bash
+PYTHONPATH=apps/api apps/api/.venv/bin/python -m unittest tests.test_m71_command_continuation tests.test_m32 tests.test_m42 tests.test_m43 tests.test_m71 -q
+PYTHONPATH=apps/api apps/api/.venv/bin/python -m unittest discover -s apps/api/tests -q
+git diff --check
+```
+
+The multi-turn file-tool test verifies two model requests produce two call records and
+aggregate provider-reported tokens once per request. The command continuation
+fixture verifies four Developer requests across read, edit, approval and resume
+retain four attributable records. Accounting remains in the existing runtime
+callbacks, with no LangChain callback accounting path.
+
+### Final M7.1 exit evidence
+
+| Requirement | Evidence/status |
+|---|---|
+| Developer file tools through Permission Gateway | Automated M7.1 tests pass for list/read/write/edit and protected-path denial. |
+| Command/test tools and human approval continuation | Implemented for configured command profiles through the existing gateway. Tests cover pending approval, approve/deny, test evidence, duplicate decision, stale generation, pause/cancel, restart while pending, crash between durable intervention and workflow commit, restart after approval before start, crash before the execution fence, and uncertain post-fence crash. |
+| Manager/Reviewer structured output | Existing provider-neutral schemas and domain validation remain in use. LangChain wrappers are intentionally omitted because they add no functional benefit. Paired workflows preserve both roles' decisions. |
+| Legacy/adapted parity scenarios A–F | Passed in `tests/test_m71_parity.py`; [the compatibility record](M7_1_COMPATIBILITY.md) lists outcomes and intentional provider-call differences. |
+| Bounded end-to-end offline workflow with adapted Developer | PASS: Manager → Developer read/edit → approved test → submission → Reviewer PASS → completion. |
+| Reviewer FAIL → revision → PASS using adapted Developer | PASS: two attempts, approved tests, immutable submissions, exact reviews, revision brief and acceptance. |
+| Live OpenRouter verification | Not performed. |
+| M6 Office/Inspector trace compatibility | Existing inspection payload and cursor replay verified with adapted Developer tool, approval, command, submission, review and revision events. No frontend production changes. |
+
+Final closeout: **377 targeted backend tests passed**, followed by **480 full
+backend tests passed**. `git diff --check` passed. The paired matrix A–F and
+Inspector backend contract passed. **M7.1 is COMPLETE; M7.2 remains NOT STARTED
+and ready for review.** Live-provider verification not performed; deterministic
+compatibility and regression coverage completed. No frontend production code
+changed, so frontend validation was not required for this closeout.
+
 ## M4.2 — Restart reconciliation and durable execution controls
 
 **COMPLETE on 2026-10-05. M4.3 has not started.** This section supersedes the

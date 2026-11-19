@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.agents.contracts import AgentOutput, ContractValidationError, parse_agent_output, ManagerDecision, FinalResult
+from app.agents.langchain_layer import ApprovalRequired
 from app.context.builder import BuiltContext, ContextManifest, ProjectContext, build_context
 from app.domain.agents import AgentConfigSnapshot, AgentDefinition, AgentKind
 from app.providers.base import (
@@ -53,6 +54,23 @@ class OutputValidationError(InvocationError):
 
 class ProviderInvocationError(InvocationError):
     """Raised after the bounded provider retry budget is exhausted."""
+
+
+class AgentExecutionSuspended(InvocationError):
+    """A tool requested human approval; carries only normalized continuation data."""
+    def __init__(self, message, *, approval_id, tool_request_id, request, tool_call,
+                 context, provider_request_id, provider_calls, tool_calls, retry_attempts,
+                 call_records=()):
+        super().__init__(message, call_records=call_records)
+        self.approval_id = approval_id
+        self.tool_request_id = tool_request_id
+        self.command_request = request
+        self.tool_call = tool_call
+        self.context = context
+        self.provider_request_id = provider_request_id
+        self.provider_calls = provider_calls
+        self.tool_calls = tool_calls
+        self.retry_attempts = retry_attempts
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +150,13 @@ class AgentRuntime:
         before_call: Any = None,
         on_call_started: Any = None,
         on_call_finished: Any = None,
+        langchain_tools: tuple[Any, ...] = (),
+        max_tool_calls: int = 8,
+        initial_context: dict[str, Any] | None = None,
+        call_number_offset: int = 0,
+        tool_call_offset: int = 0,
+        on_tool_call: Any = None,
+        on_tool_result: Any = None,
     ) -> AgentInvocation:
         """Build context, make bounded calls, and validate one role output."""
 
@@ -139,6 +164,10 @@ class AgentRuntime:
             raise RuntimeConfigurationError(
                 "Configured tools or permissions are unavailable until the tools milestone; agent definitions must be tool-free"
             )
+        if langchain_tools and agent.kind.value != "developer":
+            raise RuntimeConfigurationError("LangChain tools are available only to Developer")
+        if max_tool_calls < 1:
+            raise ValueError("max_tool_calls must be positive")
         invocation_id = invocation_id or f"inv_{uuid4().hex}"
         snapshot = agent.snapshot()
         built = build_context(agent, project, source_versions=source_versions)
@@ -169,6 +198,9 @@ class AgentRuntime:
             system_instructions=snapshot.system_instructions,
             context=built.payload,
             output_schema=schema,
+            tools=tuple({"type": "function", "name": item.name, "description": item.description,
+                         "parameters": item.args_schema.model_json_schema(), "strict": True}
+                        for item in langchain_tools),
         )
         capabilities = getattr(provider, "capabilities", None)
         self._check_capabilities(capabilities, request)
@@ -186,8 +218,11 @@ class AgentRuntime:
 
         transient_attempts = 0
         repairs = 0
-        attempt_number = 0
+        attempt_number = call_number_offset
+        tool_calls_used = tool_call_offset
         current_request = request
+        if initial_context is not None:
+            current_request = replace(request, context=initial_context)
         while True:
             if before_call is not None:
                 try:
@@ -222,6 +257,73 @@ class AgentRuntime:
                 raise ProviderInvocationError(f"provider call failed: {exc}", call_records=tuple(records)) from exc
 
             if response.tool_calls:
+                if langchain_tools and agent.kind.value == "developer":
+                    if (any(call.name == 'run_approved_command' for call in response.tool_calls)
+                            and len(response.tool_calls) != 1):
+                        retain(self._response_record(call_id, invocation_id, attempt_number, purpose,
+                            provider_name, snapshot.model, response, "failed", "ToolBatchUnsupported",
+                            "approval tools must be the sole call in a provider response"))
+                        raise UndeclaredToolError("approval tools must be requested one at a time",
+                                                  call_records=tuple(records))
+                    by_name = {item.name: item for item in langchain_tools}
+                    results = []
+                    for tool_call in response.tool_calls:
+                        if tool_calls_used >= max_tool_calls:
+                            retain(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "failed", "ToolBudgetExceeded", "Developer tool-call limit reached"))
+                            raise UndeclaredToolError("Developer tool-call limit reached", call_records=tuple(records))
+                        target = by_name.get(tool_call.name)
+                        if target is None:
+                            retain(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "failed", "UndeclaredToolError", "provider returned undeclared tool calls"))
+                            raise UndeclaredToolError(f"provider returned undeclared tool call: {tool_call.name}", call_records=tuple(records))
+                        try:
+                            if on_tool_call is not None:
+                                on_tool_call(tool_call.name, dict(tool_call.arguments), tool_calls_used + 1,
+                                             dict(current_request.context), response.provider_request_id,
+                                             attempt_number, transient_attempts)
+                            result = target.invoke(dict(tool_call.arguments))
+                        except ApprovalRequired as exc:
+                            retain(self._response_record(call_id, invocation_id, attempt_number, purpose,
+                                provider_name, snapshot.model, response, "succeeded", None, None))
+                            raise AgentExecutionSuspended(
+                                'WAITING_FOR_APPROVAL', approval_id=exc.approval_id,
+                                tool_request_id=exc.tool_request_id, request=exc.request,
+                                tool_call={'name': tool_call.name, 'arguments': dict(tool_call.arguments)},
+                                context=dict(current_request.context),
+                                provider_request_id=response.provider_request_id,
+                                provider_calls=attempt_number, tool_calls=tool_calls_used + 1,
+                                retry_attempts=transient_attempts,
+                                call_records=tuple(records)) from exc
+                        except InvocationError as exc:
+                            retain(self._response_record(call_id, invocation_id, attempt_number, purpose,
+                                provider_name, snapshot.model, response, "succeeded", None, None))
+                            exc.call_records = tuple(records)
+                            raise
+                        except Exception as exc:
+                            retain(self._response_record(call_id, invocation_id, attempt_number, purpose,
+                                provider_name, snapshot.model, response, "failed", type(exc).__name__,
+                                f"LangChain tool {tool_call.name} failed"))
+                            raise InvocationError(
+                                f"Developer tool {tool_call.name} failed: {type(exc).__name__}",
+                                call_records=tuple(records),
+                            ) from exc
+                        results.append({"tool_call_id": tool_call.name, "result": result})
+                        tool_calls_used += 1
+                        if on_tool_result is not None:
+                            progress_context = {**dict(current_request.context), "tool_results": list(results)}
+                            on_tool_result(progress_context)
+                    retain(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "succeeded", None, None))
+                    next_context = {**dict(current_request.context), "tool_results": results}
+                    if len(json.dumps(next_context, ensure_ascii=False, separators=(",", ":"))) > agent.context_policy.max_chars:
+                        raise RuntimeConfigurationError("LangChain tool results exceed the configured context budget",
+                                                         call_records=tuple(records))
+                    current_request = ProviderRequest(
+                        invocation_id=request.invocation_id, agent_kind=request.agent_kind,
+                        model=request.model, system_instructions=request.system_instructions,
+                        context=next_context,
+                        output_schema=request.output_schema,
+                        tools=request.tools,
+                    )
+                    continue
                 retain(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "failed", "UndeclaredToolError", "provider returned tool calls"))
                 names = ", ".join(call.name for call in response.tool_calls)
                 raise UndeclaredToolError(f"provider returned undeclared tool calls: {names}", call_records=tuple(records))
@@ -250,6 +352,7 @@ class AgentRuntime:
                         ),
                         context=request.context,
                         output_schema=request.output_schema,
+                        tools=request.tools,
                     )
                     continue
                 raise OutputValidationError(message, call_records=tuple(records)) from exc
@@ -263,7 +366,7 @@ class AgentRuntime:
                 provider_name=provider_name,
                 provider_request_id=response.provider_request_id,
                 output=output,
-                usage=response.usage,
+                usage=self._sum_usage(records),
                 call_records=tuple(records),
                 estimated_cost=total_cost,
             )
@@ -274,6 +377,8 @@ class AgentRuntime:
             return
         if not capabilities.structured_outputs:
             raise RuntimeConfigurationError("provider does not support required structured outputs")
+        if request.tools and not capabilities.tools:
+            raise RuntimeConfigurationError("provider does not support declared tools")
         if not capabilities.supports_model(request.model):
             raise RuntimeConfigurationError(f"provider does not support configured model {request.model!r}")
 
@@ -331,6 +436,17 @@ class AgentRuntime:
         if not costs:
             return None
         return CostEstimate(amount=sum(costs, Decimal("0")))
+
+    @staticmethod
+    def _sum_usage(records: list[LLMCallRecord]) -> UsageSnapshot | None:
+        """Return complete invocation usage only when every submitted call is known."""
+        if not records or any(record.usage is None for record in records):
+            return None
+        return UsageSnapshot(
+            input_tokens=sum(record.usage.input_tokens for record in records),
+            output_tokens=sum(record.usage.output_tokens for record in records),
+            cached_input_tokens=sum(record.usage.cached_input_tokens for record in records),
+        )
 
 
 def invoke_agent(

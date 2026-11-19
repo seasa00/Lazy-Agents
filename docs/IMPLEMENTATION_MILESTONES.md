@@ -1,10 +1,22 @@
 # AI Office — Implementation milestone roadmap
 
-Status: planning only. No milestone has been implemented by creating this document.
+**Official status: M1–M6 COMPLETE. M6 is frozen and closed. M7.1 COMPLETE; M7.2 is not started and ready for review.**
 
-Architecture source of truth: [AI_OFFICE_BLUEPRINT.md](../AI_OFFICE_BLUEPRINT.md).
+M7.1 is closed. This update does not begin M7.2 or later work.
 
-This roadmap sequences that architecture into independently reviewable increments. It does not replace the blueprint or authorize starting implementation. Complete and review one sub-milestone before starting the next. M6 and M7 are each single milestones.
+| Milestone | Status |
+|---|---|
+| M1 — Agent Core | Complete |
+| M2 — Orchestration | Complete |
+| M3 — Tools & Permissions | Complete |
+| M4 — Persistence & Observability | Complete |
+| M5 — Functional Web UI | Complete |
+| M6 — AI Office Experience | Complete — frozen and closed |
+| M7 — Agent Runtime Modernization & Production Hardening | In Progress — M7.1 complete; M7.2–M7.6 not started |
+
+Architecture reference: [AI_OFFICE_BLUEPRINT.md](../AI_OFFICE_BLUEPRINT.md). The M7 target below supersedes the original proposal where migration direction differs; existing [domain contracts](contracts.md) remain binding.
+
+This roadmap sequences that architecture into independently reviewable increments. It does not replace the blueprint or authorize starting implementation. Complete and review one sub-milestone before starting the next. M6 is a completed single milestone. M7 has six sequential review gates, M7.1–M7.6. Do not reopen M6 or assign new work to it.
 
 ## Delivery principles
 
@@ -46,7 +58,7 @@ Every milestone below must satisfy its own Definition of Done **and** this share
 4. Known limitations are explicit, especially temporary in-memory state and trusted-command execution.
 5. No credentials, user secrets, generated workspaces, or runtime databases are committed.
 6. Update the contract documentation, concise session handoff, and verification record described below.
-7. Stop for review. Do not begin the next milestone automatically. Revisions requested during review remain part of the current milestone.
+7. Stop for review. Do not begin the next milestone automatically. Revisions during an active gate remain in that gate; M6 is closed and frozen. Future runtime integration and migration fixes belong to M7 after separate implementation authorization.
 
 Tests should prove meaningful behavior and boundaries, not mirror method implementations. Avoid snapshotting nondeterministic model prose. Live checks assess structure, attribution, and usable behavior rather than requiring a model to produce an exact sentence or a particular accidental defect.
 
@@ -56,7 +68,7 @@ Paths below are proposed future paths, not files created by this planning task:
 
 - `API` = `apps/api/app/`
 - `TESTS` = `apps/api/tests/`
-- `WEB` = `apps/web/src/`
+- `WEB` = `apps/web/` (the implemented App Router project root)
 
 Every future implementation session reads:
 
@@ -426,6 +438,12 @@ bounded approved tools; the full automated suite passed. M4.1 remains not starte
 
 ## M6 — AI Office Experience
 
+**Status: COMPLETE — frozen and closed.** Delivered the production Office
+Experience and observability UI: approved Pixel Office, Agent Inspector,
+pop-out/fullscreen behavior, and integration with the existing Lazy Agents system.
+No new implementation work belongs in M6. The original gate description below is
+retained as historical scope; earlier layout/module proposals do not reopen it.
+
 **Goal:** Represent actual execution as an office containing exactly three employees and their workspaces.
 
 **Why this milestone exists:** Adds the project's distinctive product experience after the underlying workflow is useful and observable.
@@ -452,31 +470,253 @@ bounded approved tools; the full automated suite passed. M4.1 remains not starte
 
 ---
 
-## M7 — Real-Time & Reliability Polish
+## M7 — Agent Runtime Modernization & Production Hardening
 
-**Goal:** Validate the complete application against ordinary failures and make its personal/portfolio release reproducible.
+**Status: IN PROGRESS.** M7.1 is complete; M7.2–M7.6 are planned and not started.
 
-**Why this milestone exists:** Integration exposes timing and recovery defects that component-level tests cannot fully establish. This phase fixes evidence-backed issues rather than introducing deferred core guarantees.
+**Goal:** Introduce LangChain and LangGraph incrementally while preserving the
+Lazy Agents domain architecture, permissions, persistence, evidence, recovery,
+usage accounting, and the completed M6 observability experience.
 
-**Scope:** Full fault-injection matrix; SSE interruption/replay/reset; repeated browser refresh; pause/resume/stop/cancel races; provider timeouts/rate limits/malformed output; interrupted tools and backend restarts; stale-result protection; persistence and usage reconciliation; multi-tab control conflicts while preserving one active run; accessibility regressions; local startup and release instructions.
+This replaces the former single gate, **M7 — Real-Time & Reliability Polish**.
+Its failure matrix and release verification remain required, now within the
+migration, recovery, evaluation, and production phases below.
 
-**Expected modules/files:** `TESTS/integration/`; `TESTS/recovery/`; frontend/browser end-to-end tests; test failure-injection helpers; targeted fixes only in affected modules; `docs/verification.md`; `docs/decisions.md`; README and a small sample project fixture. Avoid broad refactors unrelated to demonstrated failures.
+### Target architecture and ownership
 
-**Key contracts/data structures:** Preserve all prior public contracts. Clarify existing recovery/reset outcomes when needed; any unavoidable change is documented, versioned where appropriate, and tested against its consumers. No parallel workflow engine or new persistence model.
+Planned execution path (not the current installed runtime):
 
-**Tests:** Exercise the release matrix below across backend and browser. Verify each fault leaves a terminal, paused, recoverable, or explicitly blocked state with an explanation. Run normal offline regression suites and one bounded opt-in live-provider project. Check that cost, task counts, and review counters reconcile after replay/restart.
+```text
+Next.js
+↓
+Pixel Office + Agent Inspector
+↓
+FastAPI / SSE
+↓
+LangGraph Orchestrator
+↓
+Manager / Developer / Reviewer
+↓
+LangChain model/tool layer
+↓
+Lazy Agents Permission Gateway
+↓
+Filesystem / Commands / Tests
+```
 
-**Manual verification:** Install from clean local instructions. Complete a small project. During deterministic fault scenarios, disconnect the browser, refresh repeatedly, pause during a slow call, cancel during a command, restart at an uncertain side-effect boundary, and resume after reconciliation. Inspect retained evidence and final usage.
+This path describes responsibilities, not permission to bypass domain services.
+SSE delivers committed backend events back to the existing M6 consumers.
 
-**Acceptance criteria:** No silent loss of committed history; no automatic duplicate side effect after an uncertain interruption; no stale result advancing a canceled/revised run; no replay-induced duplicate UI action or cost increment; no infinite retry loop; no new work after pause acknowledgment until resume. Any unavoidable uncertainty is visible and actionable.
+| Owner | Responsibility |
+|---|---|
+| LangGraph | Workflow orchestration and execution/resume coordination |
+| LangChain | Model and tool abstractions at individual-agent execution boundaries |
+| Lazy Agents Permission Gateway | Mandatory authorization, bounded execution, and receipts for side-effecting tools |
+| Lazy Agents domain systems / SQLite | Projects, tasks, runs, immutable submissions, reviews, evidence, events, usage/cost accounting, recovery, idempotency, and permissions |
+| Pixel Office / Agent Inspector | Presentation of authoritative backend state and redacted execution traces |
 
-**Explicitly NOT included:** Distributed correctness, high-scale load infrastructure, remote hosting, enterprise authentication, support for every OS/provider, new features, or claims of guaranteed exactly-once external execution.
+**Required design principles:**
 
-**Definition of Done:** Shared gate plus completed release matrix, documented actual results and remaining limits, clean-install verification, and a reproducible demonstration of the blueprint's end-to-end acceptance scenario.
+1. LangGraph owns workflow orchestration, not domain persistence.
+2. LangChain owns model/tool abstractions, not security policy.
+3. The Permission Gateway remains mandatory for side-effecting tools.
+4. SQLite/domain records remain the source of truth.
+5. Existing M6 observability surfaces consume real backend runtime events.
+6. Do not expose or fabricate hidden chain-of-thought; traces show operations, structured results, and permitted summaries.
+7. Prompt/context views redact credentials and secrets before storage or delivery to observability consumers.
+8. Preserve existing working behavior through regression testing.
+9. Migrate incrementally, with an explicit comparison and rollback boundary, rather than a full rewrite.
+10. M6 remains complete and frozen; all new runtime work belongs to M7.
 
-**Dependencies:** M6 and every earlier gate. Reliability defects discovered earlier must be fixed in their current gate, not postponed to M7.
+### M7.1 — LangChain Agent Layer
 
-**Context handoff:** Read public contracts, current handoff, verification record, blueprint §§3, 12, 14, 16–18, 20, and the failing scenario's modules/tests. Do not initially read the whole repository; expand only along the observed failure path. Update the handoff with release status, verified guarantees, known limitations, and the next proposed work rather than assuming a new milestone is authorized.
+**Status: COMPLETE.** M6 remains closed. The current
+provider-neutral runtime can execute bounded LangChain Developer file tools and
+profile-backed command/test tools when the provider advertises tool support.
+Command/test approval stores a durable application-owned continuation, returns
+control while waiting, and resumes from a validated boundary. Existing command
+start fences prevent replay after an uncertain execution start. Manager and Reviewer keep their existing provider
+structured-output and domain-validation paths because LangChain wrappers add no
+functional value for their current calls. The full legacy/adapted scenario matrix
+passed in deterministic paired fixtures A–F. The Inspector backend event/trace
+contract and full backend regression suite also passed. See
+`docs/CURRENT_MILESTONE.md`, `docs/M7_1_COMPATIBILITY.md`, and
+`docs/verification.md`. M7.2 is ready for review and has not started.
+
+**Dependency:** closed M6 baseline.
+
+**Goal:** Introduce LangChain within individual-agent execution without changing
+overall orchestration. Start with the Developer agent.
+
+**Scope:**
+
+- Integrate LangChain model abstractions where useful; wrap existing Developer capabilities as LangChain tools.
+- Route every tool execution through the existing Permission Gateway. Wrappers must preserve filesystem scope, command approvals, test security, timeout/output limits, and evidence receipts.
+- Use structured outputs for Manager and Reviewer where appropriate, preserving their existing schemas and responsibilities.
+- Preserve invocation/configuration snapshots, usage/cost tracking (including retries and unknown usage), and evidence capture.
+- LangChain must not become a persistence layer, permission layer, or source of truth. The existing orchestrator continues to schedule work.
+
+**Verification and exit gate:** Run equivalent deterministic fixtures against the
+current and adapted agent layers. Compare structured outcomes, authorized and
+denied tool behavior, immutable evidence, validation failures, usage attribution,
+and retry bounds. Record differences explicitly. No new orchestration is admitted
+in this phase. Preserve the existing implementation as the comparison baseline.
+
+### M7.2 — LangGraph Orchestration
+
+**Status:** Not Started — ready for review. **Dependency:** reviewed M7.1.
+
+**Goal:** Introduce LangGraph alongside the existing orchestrator.
+
+Target logical task flow:
+
+```text
+START → Manager → Developer → Reviewer
+Reviewer PASS → END
+Reviewer FAIL → revision flow → Developer → Reviewer
+```
+
+PASS reaches END only after the existing Manager acceptance/domain validation
+succeeds. For multiple tasks, END completes the accepted task cycle; the run ends
+only when all required tasks are accepted and existing finalization rules pass.
+FAIL routes through the Manager's revision decision and domain gates. Blocked,
+error, exhausted, canceled, and interrupted states retain their current meanings.
+
+**Scope and migration boundary:**
+
+- Preserve exactly Manager, Developer, and Reviewer; graph nodes are operations, not additional agents.
+- Introduce explicit interchangeable boundaries such as `LegacyOrchestrator` and `LangGraphOrchestrator`, backed by the same domain contracts.
+- Keep the legacy orchestrator and default initially. Compare both on isolated equivalent fixtures; never run both against the same live side effects.
+- Preserve revision limits, exact-submission review semantics, immutable submission history, task/run state, usage/cost accounting, evidence, permissions, and recovery.
+- Domain services validate and commit proposed transitions. Graph completion alone cannot accept a submission, spend a permission, or complete a run.
+
+**Verification and exit gate:** Run equivalent regression scenarios against both
+orchestrators before any default switch. Compare domain outcomes, review linkage,
+limits, receipts, event identities, usage, pause/cancel behavior, and recovery.
+Document justified differences and an explicit default-switch/rollback decision.
+A switch is gated on relevant observability, recovery, and evaluation evidence
+from M7.3–M7.5 as well; completing M7.2 alone does not authorize removal of legacy
+support or an automatic switch. Never roll back by replaying uncertain effects.
+
+### M7.3 — LangGraph Observability Integration
+
+**Status:** Not Started. **Dependency:** reviewed M7.2 migration boundary.
+
+**Goal:** Map genuine LangGraph runtime execution into the event/trace architecture
+consumed by the completed M6 Office Experience and Agent Inspector.
+
+**Required events:** node started, node completed, agent handoff, tool invocation,
+tool result, retry, review PASS, review FAIL, revision requested, interrupt,
+resume, error, and workflow completed.
+
+Map events to existing envelopes and trace references with project/run/task,
+agent/invocation, operation, attempt, and exact submission/review identifiers as
+applicable. Use stable committed event identities and replay/deduplication rules.
+Document event mappings and any versioned contract extension. A graph callback
+must not announce a domain success before the corresponding durable commit.
+
+Pixel Office and Agent Inspector remain consumers of backend-authoritative state.
+The Inspector must display real runtime traces, safe structured results, and
+redacted prompt/context views. Do not introduce fake UI timers, frontend-derived
+workflow state, fabricated reasoning, or hidden chain-of-thought. M6 remains
+closed; runtime adapters and necessary trace integration are M7 work.
+
+**Verification and exit gate:** Demonstrate a traced task and a revision cycle,
+including tool receipts and interrupt/resume. Verify refresh, SSE replay and
+reconnect do not duplicate activity, handoffs, or accounting. Check secret
+redaction at storage and display boundaries and preserve M6 surface behavior.
+
+### M7.4 — Reliability & Recovery Hardening
+
+**Status:** Not Started. **Dependency:** reviewed M7.3.
+
+**Goal:** Preserve robust, bounded behavior under realistic runtime failures.
+
+Cover LLM timeout, provider error, malformed structured output, tool timeout,
+command failure, permission denial, retry budget exhaustion, context/token
+overflow, process crash, restart/recovery, duplicate events, idempotency, SSE
+reconnect, concurrent run requests, incomplete submissions, interrupted review,
+historical run reconstruction, and secret redaction. Concurrent-run checks must
+preserve the existing application-wide one-active-run constraint; parallel active
+runs are not a new feature. Include multi-tab control races and late results.
+
+**Checkpoint ownership, if introduced:**
+
+- Lazy Agents database = domain source of truth.
+- LangGraph checkpoint = execution/resume state only.
+- Link checkpoints to durable run/operation identities, versions, and generations; document checkpoint schema/version compatibility and reconciliation order.
+- On restart, reconcile domain state and retained receipts before graph resumption. A missing, stale, or conflicting checkpoint cannot overwrite domain history or cause blind replay of file, command, or provider effects.
+- Unknown execution/billing stays unknown; recovery requires explicit existing resolution/resume gates. Checkpoints cannot resurrect canceled work or reset revision/retry counters.
+- Historical reconstruction uses immutable domain records; document safe handling when a checkpoint is missing, corrupt, or from an incompatible graph version.
+
+**Verification and exit gate:** Fault injection must leave each run terminal,
+paused, explicitly blocked, or recoverable with an explanation. Demonstrate no
+silent history loss, duplicate side effect, duplicate usage, stale advancement,
+unbounded retries, or work after acknowledged pause. Reconcile crash boundaries
+between graph progress and SQLite commits. Complete the retained release matrix
+below and record remaining uncertainties without claiming exactly-once execution.
+
+### M7.5 — Evaluation & Regression Suite
+
+**Status:** Not Started. **Dependency:** reviewed M7.4.
+
+**Goal:** Demonstrate that migration preserves the existing system with repeatable,
+comparable scenarios rather than impressions of model prose.
+
+**Required scenarios:** simple successful task; tool-heavy task; Reviewer PASS on
+first round; Reviewer FAIL → revision → PASS; repeated FAIL → revision limit
+reached; permission denied; test failure; tool timeout; LLM timeout; malformed
+model response; process killed mid-run; successful recovery after restart.
+
+**Metrics:** task success rate, review rounds, LLM calls, input/output tokens,
+estimated cost, latency, tool calls, retries, failures, and recovery success.
+Define denominators, measurement boundaries, model/config versions, price
+snapshots, and thresholds before accepting results. Unknown tokens/cost remain
+unknown rather than zero. Compare equivalent isolated legacy and LangGraph runs.
+
+**Verification and exit gate:** Provide reproducible fixtures and reports with
+expected domain outcomes, evidence links, metrics, and explanations for differences.
+Deterministic offline regressions require no keys or paid calls. Any bounded
+opt-in live-provider evaluation is reported separately with its settings and
+limitations. Do not claim an unperformed live check passed. Existing security,
+evidence, review, recovery, and accounting guarantees must not regress. Record
+whether the evidence supports switching the default, with a rollback plan that
+preserves retained histories and uncertain operations.
+
+### M7.6 — Production & Portfolio Finish
+
+**Status:** Not Started. **Dependency:** reviewed M7.5 and explicit runtime
+selection decision supported by the preceding gates.
+
+**Goal:** Make Lazy Agents easy to run, understand, demonstrate, and evaluate.
+
+**Planned deliverables:**
+
+- Docker/deployment verification and one-command local startup where practical.
+- A placeholder-only `.env.example`, installation guide, and troubleshooting guide.
+- Architecture documentation and LangChain/LangGraph design rationale.
+- Permission/security model and persistence/recovery ownership explanation.
+- Agent Inspector and Pixel Office screenshots of real backend activity.
+- An end-to-end demo workflow and a sample project/task.
+- Evaluation results, verified environment/version details, and known limitations.
+
+The `.env.example` templates were previously removed. Their safe reintroduction
+and any narrow ignore-rule exception are future M7.6 work, explicitly requested
+by this new roadmap; do not recreate templates or change ignore files now.
+Deployment verification must document the supported local/container topology,
+loopback access, database/artifact durability, and restart behavior. It does not
+implicitly add public hosting, authentication, or concurrent active runs.
+
+**Verification and exit gate:** A clean installation follows the documented
+startup path and completes the sample workflow. Verify container persistence and
+restart/recovery, reconcile demo evidence and usage, capture the existing M6
+surfaces, publish actual evaluation outcomes, and document remaining limits.
+Do not treat framework adoption alone as production readiness.
+
+**M7 completion:** All six review gates and the shared Definition of Done must
+pass with recorded evidence. Preserve prior public contracts or document/version
+necessary extensions. These are completion requirements for future work; this
+roadmap itself adds no runtime dependencies or production code.
 
 ### Release verification matrix
 
@@ -508,38 +748,44 @@ bounded approved tools; the full automated suite passed. M4.1 remains not starte
 | M3.2 | Real development demonstration: disposable workspace only; restart durability is not established |
 | M4.3 | Usable backend for a technical user comfortable with CLI/API; permissions, history, recovery, and live events exist |
 | **M5.2** | **Best first personal-use release:** complete supervised browser workflow with evidence, controls, usage, and baseline recovery |
-| M6 | Distinctive visual office suitable for a portfolio demonstration |
-| M7 | Hardened personal/portfolio V1 with verified failure behavior and repeatable setup |
+| M6 | Complete and frozen: production Office Experience, approved Pixel Office, Agent Inspector, pop-out/fullscreen, and system integration |
+| M7 | In Progress: M7.1 complete; later phases remain planned |
 
-M5.2 is the best point to begin using AI Office for small, supervised personal projects in dedicated workspaces. M6 adds the visual identity; it is not a prerequisite for usefulness. M7 increases confidence through full-system verification. Valuable projects still deserve normal version control/backups and the documented trusted-command boundary.
+M5.2 is the best point to begin using AI Office for small, supervised personal projects in dedicated workspaces. M6 adds the visual identity; it is not a prerequisite for usefulness. M7.1 is complete; later runtime, reliability, evaluation, and production phases remain not started. Valuable projects still deserve normal version control/backups and the documented trusted-command boundary.
 
 ## Compact roadmap
 
 ```text
-M1  Agent Core
+M1  Agent Core — COMPLETE
     M1.1 Contracts and isolated runtime
     M1.2 One provider, bounded calls, usage
  ↓
-M2  Orchestration
+M2  Orchestration — COMPLETE
     M2.1 Shared state, planning, transitions
     M2.2 Complete workflow and bounded controls
  ↓
-M3  Tools & Permissions
+M3  Tools & Permissions — COMPLETE
     M3.1 Workspace files and submissions — COMPLETE
     M3.2 Approved commands and test evidence — COMPLETE
  ↓
-M4  Persistence & Observability
+M4  Persistence & Observability — COMPLETE
     M4.1 SQLite history and accounting
     M4.2 Restart reconciliation
     M4.3 FastAPI snapshots, commands, baseline SSE
  ↓
-M5  Functional Web UI
+M5  Functional Web UI — COMPLETE
     M5.1 Browser-operated workflow
     M5.2 Evidence, usage, settings, recovery  ← First personal-use release
  ↓
-M6  AI Office Experience
+M6  AI Office Experience — COMPLETE / FROZEN
  ↓
-M7  Real-Time & Reliability Polish          ← Hardened portfolio V1
+M7  Agent Runtime Modernization & Production Hardening — IN PROGRESS
+    M7.1 LangChain Agent Layer — COMPLETE
+    M7.2 LangGraph Orchestration
+    M7.3 LangGraph Observability Integration
+    M7.4 Reliability & Recovery Hardening
+    M7.5 Evaluation & Regression Suite
+    M7.6 Production & Portfolio Finish
 ```
 
-There are 13 review gates. Each leaves a working, testable increment and a concise handoff for the next implementation session. The first implementation request should cover M1.1 only.
+There are 18 review gates: 12 completed through M6 and six M7 phases. M7.1 is complete; M7.2 is not started and ready for review. M6 remains frozen and closed.

@@ -1,22 +1,51 @@
 # Current milestone
 
-**M6 — AI Office Experience COMPLETE.**
-M1 through M5.2 remain complete. **Stop after M6. Do not start M7.**
+**Official status: M1–M6 COMPLETE. M6 is frozen and closed.**
 
-The M6 reference implementation uses a broad cozy panorama, left-side navigation,
-light dashboard panels and three horizontally arranged workstations. Independent
-transparent atlas layers compose characters, desks, chairs and role equipment;
-empty matching day/night structural shells contain no employees or furniture.
-Plants and handoff documents remain reusable assets. HTML cards show real names,
-statuses, tasks and review details. Tablet retains the room; mobile stacks stations.
+M6 delivered the production Office Experience and observability UI, including
+the approved Pixel Office, Agent Inspector, pop-out/fullscreen behavior, and
+integration with the existing Lazy Agents system. No new implementation work is
+assigned to M6. Earlier visual/reference-pass notes are historical records.
 
-Existing backend projections, command gates, committed-event deduplication,
-inspection/navigation, usage uncertainty and recovery behavior are preserved.
-No backend logic changes or M7 work are included. Generation prompts and asset
-contracts: `apps/web/features/office/sprites/README.md` and `M6_PROMPTS.md`.
+**Active milestone: M7 — Agent Runtime Modernization & Production Hardening.**
+**M7.1 is COMPLETE. M7.2 is NOT STARTED and ready for review.** M6 remains frozen
+and closed.
 
-Current reference-pass verification is recorded in `docs/verification.md`.
-Previous M6 verification entries describe earlier visual implementations.
+| Planned phase | Goal | Status |
+|---|---|---|
+| M7.1 — LangChain Agent Layer | Developer file and approved command/test adapters, durable continuation, paired A–F parity and Inspector backend verification | Complete |
+| M7.2 — LangGraph Orchestration | Compare legacy and graph orchestrators before switching | Not Started — ready for review |
+| M7.3 — LangGraph Observability Integration | Feed real runtime traces into existing M6 surfaces | Not Started |
+| M7.4 — Reliability & Recovery Hardening | Preserve domain guarantees under failures/restarts | Not Started |
+| M7.5 — Evaluation & Regression Suite | Produce repeatable comparative evidence and metrics | Not Started |
+| M7.6 — Production & Portfolio Finish | Verify setup/deployment and prepare demonstration materials | Not Started |
+
+The [roadmap](IMPLEMENTATION_MILESTONES.md) defines scope and review gates.
+LangChain Core 1.8.2 is used for Developer tool abstractions and calls. The
+provider-neutral provider remains the model boundary and is the sole accounting
+path. LangGraph is not introduced. Developer file tools pass through the existing
+Permission Gateway. Command/test requests now suspend into durable continuations;
+recovery reconstructs an approval from its persisted pre-request seed and exact
+permission audit if a process stops before the workflow commit. Paired A–F
+compatibility and both offline end-to-end workflows passed; see
+[the compatibility record](M7_1_COMPATIBILITY.md).
+Manager and Reviewer retain their
+existing provider-neutral structured-output paths; adding LangChain wrappers is
+not required where it adds no functional value. SQLite/domain records own projects,
+tasks/runs, immutable submissions, reviews, evidence, events, usage/cost,
+permissions, recovery, and idempotency. Optional graph checkpoints hold only
+execution/resume state. Preserve exactly three agents, one active run, revision
+limits, exact-submission review, and backend-authoritative M6 observability.
+Do not expose hidden chain-of-thought; prompt/context traces must redact secrets.
+
+Keep the existing orchestrator and provider/runtime contracts. No LangGraph or
+M7.2 work has started. Current LangChain execution is enabled only for providers
+that declare tool support; unsupported deterministic providers retain the existing
+path. M7.1 has passed its deterministic comparison and bounded end-to-end gates.
+Manager/Reviewer schemas remain guarded by existing provider and domain validation.
+
+Verification evidence and the remaining exit gates are recorded in
+[verification.md](verification.md).
 
 ## Verified M5.2 baseline
 

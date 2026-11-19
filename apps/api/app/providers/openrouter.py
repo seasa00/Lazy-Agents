@@ -78,7 +78,7 @@ class OpenRouterResponsesProvider:
     name = "openrouter-responses"
     capabilities = ProviderCapabilities(
         structured_outputs=True,
-        tools=False,
+        tools=True,
         usage=True,
         # OpenRouter model slugs are intentionally not hard-coded. Endpoint
         # compatibility is enforced by provider.require_parameters and the
@@ -108,6 +108,9 @@ class OpenRouterResponsesProvider:
                 }
             },
         }
+        if request.tools:
+            payload["tools"] = list(request.tools)
+            payload["tool_choice"] = "auto"
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         headers = {
             "Authorization": f"Bearer {self.config.resolved_api_key()}",

@@ -4,6 +4,8 @@ A start fence proves only that execution was permitted, not that it occurred.
 Unknown operations require operator decisions; no PID is ever signaled here.
 """
 from dataclasses import replace
+from datetime import datetime, timezone
+import json
 from app.domain.events import DomainEvent
 from app.domain.projects import RunStatus, TERMINAL_RUN_STATUSES
 from app.domain.recovery import (RecoveryState, RecoveryIssue, OperationStage,
@@ -85,6 +87,24 @@ class RecoveryCoordinator:
             self.store.acknowledge_startup(project_id, run_id)
             return None
         ops = self.store.operations(project_id, run_id, metadata_only=True)
+        approvals = self.store.approvals(project_id, run_id)
+        history = self.store.tool_history(project_id, run_id)
+        def matched_approval_seed(invocation_id):
+            seed = next((c for c in wf.tool_continuations if c.invocation_id == invocation_id
+                         and c.state == 'REQUESTING_APPROVAL'), None)
+            if seed is None:
+                return None
+            try:
+                profile = json.loads(seed.arguments_json).get('profile')
+            except (TypeError, ValueError):
+                return None
+            approval = next((a for a in approvals if a.request.attempt_id == seed.attempt_id
+                             and a.request.generation == seed.generation
+                             and a.request.profile == profile), None)
+            if approval is None or not any(getattr(record, 'action', None) == 'request'
+                    and getattr(record, 'approval_id', None) == approval.id for record in history):
+                return None
+            return seed, approval
         old = wf.recovery if wf.recovery and wf.recovery.requires_resume else None
         issues = []
         def issue(identity, kind, certainty, reason, resolved=False):
@@ -97,6 +117,13 @@ class RecoveryCoordinator:
         except ArtifactIntegrityError as exc:
             issue('artifact-integrity', 'artifact', OutcomeCertainty.UNCERTAIN, str(exc))
         for op in ops:
+            # The provider call may still be marked EXECUTING because approval
+            # interrupted it before its response receipt was committed. A
+            # persisted seed plus the exact audited intervention is a safe
+            # continuation boundary; retain the call as interrupted/unknown,
+            # but do not demand provider replay or discard the approval.
+            if op.kind == 'provider' and matched_approval_seed(op.checkpoint.invocation_id):
+                continue
             if op.stage is OperationStage.PREPARED:
                 issue(op.id, op.kind, OutcomeCertainty.INTERRUPTED, 'prepared; execution start fence was never committed', True)
             elif op.stage is OperationStage.EXECUTING or op.certainty is OutcomeCertainty.UNCERTAIN:
@@ -104,7 +131,9 @@ class RecoveryCoordinator:
             elif (op.kind == 'provider' and wf.pending == op.checkpoint.invocation_id
                   and op.id == [o.id for o in ops if o.kind == 'provider' and o.checkpoint.invocation_id == wf.pending][-1]):
                 # A durable validated proposal needs explicit admission, or explicit abandonment.
-                issue(op.id, 'provider', op.certainty, 'provider receipt committed; workflow result not yet admitted')
+                if matched_approval_seed(wf.pending) is None:
+                    issue(op.id, 'provider', op.certainty,
+                          'provider receipt committed; workflow result not yet admitted')
         known_ids = {o.id for o in ops}
         history = self.store.tool_history(project_id, run_id)
         for record in history:
@@ -160,8 +189,10 @@ class RecoveryCoordinator:
         if old == recovery:
             self.store.acknowledge_startup(project_id, run_id)
             return recovery
+        has_pending_approval = any(a.status == 'pending'
+            and a.request.generation == run.execution_generation for a in approvals)
         status = run.status if run.status in TERMINAL_RUN_STATUSES else (
-            RunStatus.WAITING_FOR_USER if recovery.unresolved else RunStatus.PAUSED)
+            RunStatus.WAITING_FOR_USER if recovery.unresolved or has_pending_approval else RunStatus.PAUSED)
         def change(r):
             current = r.workflow
             cp = replace(current.checkpoint, recovery_epoch=epoch, boundary='recovery.blocked' if recovery.unresolved else 'recovery.ready') if current.checkpoint else None
@@ -192,7 +223,35 @@ class RecoveryCoordinator:
             by_id[i].status == 'pending' and by_id[i].request.generation == run.execution_generation))
         pending = (*pending, *(a.id for a in approvals if a.status == 'pending'
             and a.request.generation == run.execution_generation and a.id not in pending))
-        updated = replace(updated, pending_permissions=tuple(pending))
+        history = self.store.tool_history(project_id, run_id)
+        continuations = []
+        for continuation in updated.tool_continuations:
+            if continuation.state != 'REQUESTING_APPROVAL':
+                continuations.append(continuation)
+                continue
+            approval = next((a for a in approvals if a.request.attempt_id == continuation.attempt_id
+                and a.request.generation == continuation.generation
+                and a.request.profile == json.loads(continuation.arguments_json).get('profile')), None)
+            if approval is None:
+                continuations.append(replace(continuation, state='FAILED',
+                    updated_at=datetime.now(timezone.utc).isoformat()))
+                continue
+            request_record = next((v for v in history if getattr(v, 'action', None) == 'request'
+                                   and getattr(v, 'approval_id', None) == approval.id), None)
+            state = {'pending': 'WAITING_FOR_APPROVAL', 'approved': 'APPROVED_PENDING_EXECUTION',
+                     'consumed': 'APPROVED_PENDING_EXECUTION', 'denied': 'TOOL_COMPLETED'}
+            result_json = continuation.result_json
+            if approval.status == 'denied':
+                result_json = json.dumps({'outcome': 'denied', 'approval_id': approval.id,
+                    'reason': approval.reason}, sort_keys=True, separators=(',', ':'))
+            continuations.append(replace(continuation, permission_id=approval.id,
+                tool_request_id=request_record.id if request_record else continuation.tool_request_id,
+                state=state.get(approval.status, 'FAILED'), result_json=result_json,
+                updated_at=datetime.now(timezone.utc).isoformat()))
+            if approval.status == 'pending' and approval.id not in pending:
+                pending = (*pending, approval.id)
+        updated = replace(updated, pending_permissions=tuple(pending),
+                          tool_continuations=tuple(continuations))
         existing = {r.id for r in wf.command_results}
         updated = replace(updated, command_results=(*updated.command_results, *(r for r in results if r.id not in existing)))
         if updated == wf:
@@ -203,6 +262,7 @@ class RecoveryCoordinator:
             current = retain_calls(r.workflow, calls)
             ids = {v.id for v in current.command_results}
             current = replace(current, pending_permissions=tuple(pending),
+                              tool_continuations=updated.tool_continuations,
                               command_results=(*current.command_results, *(v for v in results if v.id not in ids)))
             return commit_run(p, replace(r, workflow=current), 'recovery.history_retained')
         self.store.atomic_update(project_id, apply, expected_version=project.version)
@@ -337,11 +397,24 @@ class RecoveryCoordinator:
             raise RecoveryError('resume requires inspected, fully resolved recovery')
         if expected_epoch is not None and rec.epoch != expected_epoch:
             raise RecoveryError('stale recovery epoch')
+        current_wf = current.workflow
+        continuations_by_operation = {c.operation_id: c for c in current_wf.tool_continuations
+            if c.state == 'APPROVED_PENDING_EXECUTION'}
+        approved_ids = {a.id for a in self.store.approvals(project_id, run_id)
+                        if a.status in {'approved', 'consumed'}}
         for op in self.store.operations(project_id, run_id):
             if op.stage is OperationStage.PREPARED:
+                continuation = continuations_by_operation.get(op.id)
+                if (op.kind == 'command' and continuation is not None
+                        and continuation.permission_id in approved_ids
+                        and continuation.generation == current.execution_generation):
+                    # PREPARED proves the command start fence was not crossed. Retain
+                    # this exact approved operation identity for a safe single retry.
+                    continue
                 self.store.record_operation(op.evolve(stage=OperationStage.SETTLED, certainty=OutcomeCertainty.CONFIRMED_FAILURE,
                     call_record=replace(op.call_record, status='not_submitted') if op.call_record else None))
         self._retain_history(project_id, run_id)
+        durable_operations = self.store.operations(project_id, run_id)
         from app.orchestration.controls import commit_run
         def apply(p):
             r = p.run(run_id)
@@ -373,8 +446,29 @@ class RecoveryCoordinator:
             status = RunStatus(rec.original_status)
             if status in {RunStatus.RUNNING, RunStatus.PAUSED, RunStatus.PAUSE_REQUESTED}:
                 status = RunStatus.RUNNING
-            wf = replace(wf, pending=None, recovery=replace(rec, requires_resume=False),
-                         blocked_reason=rec.original_blocked_reason if status is RunStatus.WAITING_FOR_USER else None,
-                         resume_phase=rec.original_resume_phase)
+            calls_by_invocation = {}
+            for call in wf.call_records:
+                calls_by_invocation[call.invocation_id] = max(
+                    calls_by_invocation.get(call.invocation_id, 0), call.attempt)
+            continued = []
+            for c in wf.tool_continuations:
+                if c.state != 'RUNNING':
+                    continued.append(c)
+                    continue
+                unreturned_tools = [o for o in durable_operations if o.kind == 'file'
+                    and o.checkpoint.invocation_id == c.invocation_id and o.updated_at > c.updated_at]
+                state = 'FAILED' if unreturned_tools else 'TOOL_COMPLETED'
+                continued.append(replace(c, state=state,
+                    provider_calls=max(c.provider_calls, calls_by_invocation.get(c.invocation_id, 0))))
+                if unreturned_tools:
+                    status = RunStatus.WAITING_FOR_USER
+            continuations = tuple(continued)
+            wf = replace(wf, pending=None, tool_continuations=continuations,
+                         recovery=replace(rec, requires_resume=False),
+                         blocked_reason=('continued tool outcome requires intervention' if status is RunStatus.WAITING_FOR_USER
+                                         and any(c.state == 'FAILED' for c in continuations) else
+                                         rec.original_blocked_reason if status is RunStatus.WAITING_FOR_USER else None),
+                         resume_phase='develop' if any(c.state == 'FAILED' for c in continuations)
+                                      else rec.original_resume_phase)
             return commit_run(p, replace(r, status=status, phase=phase, workflow=wf), 'recovery.resumed', payload={'epoch': rec.epoch})
         return self.store.atomic_update(project_id, apply).run(run_id)

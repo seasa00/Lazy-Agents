@@ -47,7 +47,7 @@ class ProviderResponseError(ProviderError):
 
 @dataclass(frozen=True, slots=True)
 class ProviderToolCall:
-    """A normalized tool request; the runtime rejects calls until tools ship."""
+    """A provider-neutral normalized tool request for the bounded agent runtime."""
 
     name: str
     arguments: Mapping[str, Any]
@@ -111,6 +111,7 @@ class ProviderRequest:
     system_instructions: str
     context: Mapping[str, Any]
     output_schema: str
+    tools: tuple[Mapping[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

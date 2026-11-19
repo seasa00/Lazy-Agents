@@ -1,5 +1,36 @@
 # AI Office — Product and Architecture Blueprint
 
+**Roadmap status:** M1–M6 complete; M6 frozen and closed. The next milestone is
+**M7 — Agent Runtime Modernization & Production Hardening (M7.1 complete)**.
+The [M7 roadmap](docs/IMPLEMENTATION_MILESTONES.md#m7--agent-runtime-modernization--production-hardening)
+supersedes the original framework recommendation and packaging exclusions below
+where they conflict with the new target. M7.2 is not started and ready for review.
+
+M6 delivered the production Office Experience and observability UI: approved
+Pixel Office, Agent Inspector, pop-out/fullscreen, and existing-system integration.
+New runtime work must preserve these surfaces and belongs to M7.
+
+### Planned M7 architecture
+
+Next.js → Pixel Office + Agent Inspector → FastAPI / SSE → LangGraph Orchestrator
+→ Manager / Developer / Reviewer → LangChain model/tool layer → Lazy Agents
+Permission Gateway → Filesystem / Commands / Tests.
+
+LangGraph owns orchestration; LangChain owns model/tool abstractions. Lazy Agents
+domain services and SQLite retain projects/tasks/runs, immutable submissions,
+reviews, evidence, events, usage/cost, recovery, idempotency, and permissions.
+Optional LangGraph checkpoints hold execution/resume state, never a competing
+domain truth. Side-effecting tools always pass through the Permission Gateway.
+Existing M6 consumers display real committed backend events and redacted traces,
+without hidden chain-of-thought or fabricated frontend workflow state.
+
+Migration proceeds through M7.1 agent adaptation, M7.2 parallel implementation
+boundaries for legacy/graph orchestrators (not concurrent live execution), M7.3
+observability, M7.4 recovery, M7.5 comparative evaluations, and M7.6 production and
+portfolio finish. Keep legacy support while equivalent regressions establish
+readiness to switch. Preserve three agents and the one-active-run constraint.
+The detailed gates and default-switch requirements live in the roadmap.
+
 AI Office is a local-first workspace for supervised AI software work. You give
 the office a project goal, review the Manager's plan, and follow implementation
 and review through a pixel-art workspace backed by inspectable project history.
@@ -215,7 +246,7 @@ The application checks every proposed decision:
 
 No agent can grant itself tools, raise its limits, bypass review, or declare completion outside those checks.
 
-**Recommendation:** direct Python orchestration with typed inputs and outputs.
+**Original M1–M6 recommendation (implemented baseline):** direct Python orchestration with typed inputs and outputs. M7 plans an incremental LangGraph migration, preserving domain validation; see the current roadmap above.
 
 **Alternative:** a general multi-agent framework.
 
@@ -462,6 +493,9 @@ Use SQLite WAL mode, short transactions, and a busy timeout. SQLite supports con
 Keep current state authoritative in tables and maintain an append-only event history alongside it. Rebuilding the entire application solely from events would add unnecessary V1 complexity.
 
 ## 12. Backend architecture
+
+The diagram below describes the existing pre-M7 architecture. The planned M7
+architecture and ownership boundary are defined at the start of this document.
 
 ```mermaid
 flowchart TB
@@ -828,7 +862,7 @@ That scenario proves the core product better than a highly polished office runni
 - Unrestricted inter-agent conversation.
 - Long-term vector memory or a vector database.
 - Automatic model routing and budget optimization.
-- Production deployment tools, email sending, and autonomous publishing.
+- Agent-operated production deployment tools, email sending, and autonomous publishing. M7.6 now plans application Docker/deployment verification and packaging; this does not grant agents publishing tools.
 - Multi-user accounts, organizations, or enterprise access control.
 - Browser automation unless a later use case requires it.
 - Kubernetes, Redis, microservices, and distributed job infrastructure.
@@ -838,7 +872,12 @@ That scenario proves the core product better than a highly polished office runni
 
 Keep extension points in agent definitions, provider adapters, tool registration, and context policy. Avoid implementing speculative subsystems.
 
-## 22. Step-by-step implementation roadmap
+## 22. Original implementation sequence (historical)
+
+The table preserves the original construction sequence, not the current milestone
+status. M1–M6 are complete and M6 is frozen. M7.1 is complete;
+M7.2–M7.6 are not started. Use [the milestone roadmap](docs/IMPLEMENTATION_MILESTONES.md)
+for the current scope and status.
 
 | Step | Deliverable | Completion check |
 |---|---|---|
@@ -857,4 +896,4 @@ Keep extension points in agent definitions, provider adapters, tool registration
 
 Test adapters in step 3 are development fixtures. The application’s live activity feed must always distinguish test runs from real provider execution.
 
-The most important decisions to settle before implementation are the default command permissions, whether plan approval is always required, and whether three total review rounds is the right default. The rest of this blueprint can proceed with the recommended baseline: one active run, sequential execution, a 2D office, SSE, SQLite, and a deterministic Python orchestrator.
+The original baseline established one active run, sequential execution, an office UI, SSE, SQLite, and deterministic domain validation. M7 preserves these domain guarantees while modernizing agent execution and orchestration. M7.1 is complete; M7.2 is not started.

@@ -1,5 +1,11 @@
 # M6 3D visual direction — The Pocket Workshop
 
+**Historical design reference — not an active implementation plan.** M6 is
+complete, frozen, and closed. The approved production Pixel Office, Agent
+Inspector, pop-out/fullscreen, and integration are the accepted baseline.
+Earlier proposals below do not authorize replacing that experience or reopening
+M6. Future runtime integration belongs to the planned M7 roadmap.
+
 ## Purpose
 
 Replace the rejected pixel-art presentation direction with a cozy miniature

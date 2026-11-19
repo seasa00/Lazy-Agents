@@ -1,5 +1,11 @@
 # M6 visual direction — AI Office
 
+**Historical design reference — not an active implementation plan.** M6 is
+complete, frozen, and closed. The approved production Pixel Office, Agent
+Inspector, pop-out/fullscreen, and integration are the accepted baseline.
+Earlier proposals below do not authorize replacing that experience or reopening
+M6. Future runtime integration belongs to the planned M7 roadmap.
+
 ## Intent
 
 Use the supplied office illustration as a mood and hierarchy reference: the work

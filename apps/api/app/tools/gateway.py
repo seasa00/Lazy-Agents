@@ -9,7 +9,7 @@ from app.domain.artifacts import CapturedSubmission, ToolCallRecord, FileChange,
 from app.domain.recovery import ExecutionCheckpoint, ExecutionOperation, OperationStage, OutcomeCertainty
 from app.tools.files import WorkspaceFiles, FileConflict
 from app.tools.submissions import capture
-from app.domain.commands import (CommandLimits, CommandApproval, CommandAuditRecord,
+from app.domain.commands import (CommandLimits, CommandApproval, CommandAuditRecord, CommandRequest,
                                  CommandResult, TestEvidence, scope_digest)
 from app.tools.commands import (workspace_version, executable_digest, command_environment,
                                 launch, collect)
@@ -43,6 +43,7 @@ class WorkspaceToolGateway:
         self.audit_sink = lambda record, approval=None: None
         self.operation_sink = lambda operation: operation
         self._command_operation = None
+        self._operations = {}
         self.policy = policy
         self._files = WorkspaceFiles(policy)
         self.before_mutation = before_mutation or self._deny_unbound
@@ -63,7 +64,9 @@ class WorkspaceToolGateway:
         self._command_launches = 0
 
     def _persist_operation(self, operation):
-        return self.operation_sink(operation) or operation
+        saved = self.operation_sink(operation) or operation
+        self._operations[saved.id] = saved
+        return saved
 
     def _prepared(self, identity, kind, scope_request, **kwargs):
         cp = ExecutionCheckpoint('', '', 'develop', scope_request.generation, 0, 1,
@@ -73,6 +76,7 @@ class WorkspaceToolGateway:
     def restore(self, operations, approvals, run, history=()):
         """Restore application-owned evidence/counters; never launch or signal a process."""
         self._approvals = {a.id: a for a in approvals}
+        self._operations = {op.id: op for op in operations}
         self._records = [r for r in history if isinstance(r, ToolCallRecord) and not r.id.endswith(':intent')]
         self._command_records = [r for r in history if isinstance(r, CommandAuditRecord)]
         self._command_requests = sum(getattr(r, 'action', '') == 'request' for r in history)
@@ -122,11 +126,23 @@ class WorkspaceToolGateway:
     def workspace_version(self):
         return workspace_version(self._files, self.command_limits)
 
-    def _command_scope(self, request):
+    def command_request(self, profile_name, *, attempt_id, generation, actor=AgentKind.DEVELOPER):
+        """Build a request from a configured immutable profile, never model argv."""
+        profile = self._profiles.get(profile_name)
+        if profile is None:
+            raise ValueError('unknown approved command profile')
+        if actor is not AgentKind.DEVELOPER or not self.policy.decide_command(actor).allowed:
+            raise ValueError('command request denied')
+        return CommandRequest(actor, attempt_id, generation, profile.name, profile.executable,
+            profile.args, self.workspace_version(), timeout_seconds=min(10, self.command_limits.max_timeout_seconds),
+            max_output_bytes=min(8192, self.command_limits.max_output_bytes))
+
+    def _command_scope(self, request, *, check_execution=True):
         decision = self.policy.decide_command(request.actor)
         if not decision.allowed:
             raise ValueError(decision.reason)
-        self.before_mutation(request)
+        if check_execution:
+            self.before_mutation(request)
         if (request.attempt_id, request.generation) in self._sealed:
             raise ValueError('submitted attempt is immutable')
         profile = self._profiles.get(request.profile)
@@ -178,7 +194,7 @@ class WorkspaceToolGateway:
                 raise ValueError('explicit boolean decision and bounded reason required')
             if approved:
                 try:
-                    digest, _, _ = self._command_scope(approval.request)
+                    digest, _, _ = self._command_scope(approval.request, check_execution=False)
                     if digest != approval.scope_digest:
                         raise ValueError('approval scope changed')
                 except (ValueError, OSError) as exc:
@@ -196,25 +212,35 @@ class WorkspaceToolGateway:
                     self._approvals[identity] = replace(approval, status='invalidated', reason=reason)
                     self._command_record('invalidate', approval.request, identity, 'invalidated', reason)
 
-    def start_command(self, request, approval_id):
+    def start_command(self, request, approval_id, *, operation_id=None):
         """Check+consume approval and launch while the runner holds the control lock."""
         with self._command_lock:
             try:
+                operation_id = operation_id or 'command_exec_' + uuid4().hex
+                existing = self._operations.get(operation_id)
+                if existing and (existing.kind != 'command' or existing.request != request
+                                 or existing.approval_id != approval_id):
+                    raise ValueError('command operation identity mismatch')
+                if existing and existing.stage is not OperationStage.PREPARED:
+                    raise ValueError('command operation already crossed its execution boundary')
                 if self.command_active:
                     raise ValueError('one command at a time')
-                if self._command_launches >= self.command_limits.max_commands:
+                if not existing and self._command_launches >= self.command_limits.max_commands:
                     raise ValueError('command launch limit exceeded')
                 digest, environment, profile = self._command_scope(request)
                 approval = self._approvals.get(approval_id)
-                if (approval is None or approval.status != 'approved' or approval.request != request
+                reusable_prestart = bool(existing and existing.stage is OperationStage.PREPARED
+                                         and approval is not None and approval.status == 'consumed')
+                if (approval is None or (approval.status != 'approved' and not reusable_prestart) or approval.request != request
                         or approval.scope_digest != digest):
                     raise ValueError('missing, denied, consumed or mismatched exact command approval')
                 self.before_mutation(request)  # Final pause/cancel check before Popen.
-                self._approvals[approval_id] = replace(approval, status='consumed')
-                self._command_launches += 1
-                self._command_record('intent', request, approval_id, 'pending')
-                operation = self._prepared('command_exec_' + uuid4().hex, 'command', request,
+                operation = existing or self._prepared(operation_id, 'command', request,
                     request=request, approval_id=approval_id, operation=request.profile)
+                if approval.status == 'approved':
+                    self._approvals[approval_id] = replace(approval, status='consumed')
+                    self._command_launches += 1
+                    self._command_record('intent', request, approval_id, 'pending')
                 operation = self._persist_operation(operation.evolve(stage=OperationStage.EXECUTING))
                 self._command_operation = operation
                 try:

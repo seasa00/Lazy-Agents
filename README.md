@@ -1,5 +1,13 @@
 # AI Office
 
+**Project status:** M1–M6 are complete. M6's production Office Experience,
+approved Pixel Office, Agent Inspector, pop-out/fullscreen, and system integration
+are frozen and closed. **M7 — Agent Runtime Modernization & Production Hardening
+is In Progress; M7.1 is complete.** The [roadmap](docs/IMPLEMENTATION_MILESTONES.md) defines six
+phases: LangChain agents (complete), then LangGraph orchestration, runtime
+observability, recovery hardening, evaluations, and production/portfolio finish.
+The later phases remain planned; startup below uses the existing runtime.
+
 **A local-first workspace for supervised AI software work.** AI Office gives
 three roles—Manager, Developer, and Reviewer—a shared project workflow, while
 keeping plans, approvals, changes, reviews, and recovery visible to you.
