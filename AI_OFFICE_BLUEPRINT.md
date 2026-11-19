@@ -1,12 +1,34 @@
-# AI Office — V1 blueprint
+# AI Office — Product and Architecture Blueprint
 
-AI Office should be a small, observable workspace where you give a goal to three AI employees, watch work move between them, and intervene when needed.
+AI Office is a local-first workspace for supervised AI software work. You give
+the office a project goal, review the Manager's plan, and follow implementation
+and review through a pixel-art workspace backed by inspectable project history.
 
-I recommend a visually expressive office backed by a deliberately simple execution system: one active project run, one task being executed at a time, three configurable agents, and a Python orchestrator that enforces the rules.
+The central architectural distinction is: **the Manager proposes decisions;
+the application validates and executes them.** Permissions, retry limits, task
+dependencies, and completion rules are enforced by application code.
 
-The central architectural distinction is this: **the Manager proposes decisions; the application validates and executes them.** Permissions, retry limits, task dependencies, and completion rules must remain enforced by code.
+## Current implementation
 
-This is a design proposal only. No application code has been implemented.
+The repository contains the M1–M6 implementation. The current application has a
+FastAPI backend, SQLite persistence, a Next.js workspace, and a pixel-art office
+for the Manager, Developer, and Reviewer. It retains task history, submissions,
+review findings, command receipts, usage, settings, and explicit recovery state.
+
+The browser app runs with an offline scripted provider by default. It needs no
+provider credential and makes no live model calls on normal startup. An optional
+OpenRouter adapter is available through the development CLI; changing a model
+name in the web settings does not enable live-provider execution.
+
+To open the application, follow the two-terminal setup in the
+[README](README.md). For current implementation details, see the
+[milestone handoff](docs/CURRENT_MILESTONE.md),
+[verification record](docs/verification.md), and
+[public contracts](docs/contracts.md).
+
+The design sections below preserve the original V1 proposal and its architectural
+rationale. Recommendations describe intended product behavior; consult the
+current milestone and contracts for what the implementation supports today.
 
 ## 1. Product concept
 
