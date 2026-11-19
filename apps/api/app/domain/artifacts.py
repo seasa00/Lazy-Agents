@@ -63,3 +63,4 @@ class ToolCallRecord:
     outcome: str
     before_hash: str | None = None
     after_hash: str | None = None
+    protocol_version: int = 1

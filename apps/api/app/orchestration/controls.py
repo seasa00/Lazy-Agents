@@ -4,10 +4,13 @@ from app.agents.contracts import Requirement
 from app.domain.events import DomainEvent
 from app.domain.projects import RunStatus
 from app.domain.tasks import TaskStatus, TaskDisposition
+from app.domain.recovery import checkpoint
 
 
 def commit_run(project, run, event_type, *, tasks=None, payload=None):
     run = replace(run, version=project.run(run.id).version + 1)
+    if run.workflow is not None:
+        run = replace(run, workflow=replace(run.workflow, checkpoint=checkpoint(project, run, event_type)))
     runs = tuple(run if r.id == run.id else r for r in project.runs)
     after = replace(project, runs=runs, tasks=project.tasks if tasks is None else tuple(tasks),
                     active_run_id=next((r.id for r in runs if r.active), None))
@@ -62,6 +65,12 @@ class WorkflowControls:
         return self._change(apply)
 
     def resume(self):
+        from app.orchestration.recovery import RecoveryCoordinator
+        recovery = RecoveryCoordinator(self.store)
+        recovery.ensure_startup(self.project_id, self.run_id)
+        r = self.store.get_run_metadata(self.project_id, self.run_id)
+        if r.workflow and r.workflow.recovery and r.workflow.recovery.requires_resume:
+            return recovery.resume(self.project_id, self.run_id)
         def apply(p, r):
             if r.status is not RunStatus.PAUSED or r.workflow.pending:
                 raise ValueError('resume requires paused state; blocked work needs resolution')
@@ -100,6 +109,8 @@ class WorkflowControls:
             if r.status is not RunStatus.WAITING_FOR_USER or r.workflow.pending:
                 raise ValueError('resolution requires blocked work')
             wf = r.workflow
+            if self.store.needs_recovery(self.project_id, self.run_id) or (wf.recovery and wf.recovery.requires_resume):
+                raise ValueError('restart requires recovery resolution and explicit resume')
             if wf.exhausted_limit:
                 raise ValueError('exhausted limits cannot be reset by resolution')
             tasks = tuple(replace(t, status=t.resume_phase or TaskStatus.TODO, blocked_reason=None,
@@ -115,6 +126,8 @@ class WorkflowControls:
         if parsed is not None and (not parsed or len({x.id for x in parsed}) != len(parsed)):
             raise ValueError('requirements must be nonempty with unique ids')
         def apply(p, r):
+            if self.store.needs_recovery(self.project_id, self.run_id) or (r.workflow.recovery and r.workflow.recovery.requires_resume):
+                raise ValueError('scope change requires resolving the recovery gate first')
             if r.status not in {RunStatus.RUNNING, RunStatus.PAUSED, RunStatus.PAUSE_REQUESTED, RunStatus.WAITING_FOR_USER}:
                 raise ValueError('scope change requires an approved workflow')
             if self.command_gateway:

@@ -70,8 +70,8 @@ class ScriptedWorkflowProvider:
         return ProviderResponse(output, request.model, f'fixture-{len(self.requests)}', usage=UsageSnapshot(10, 5))
 
 
-def make_runner(provider=None, *, limits=ExecutionLimits(), runtime=None, definitions=None):
-    store = InMemoryStateStore()
+def make_runner(provider=None, *, limits=ExecutionLimits(), runtime=None, definitions=None, store=None):
+    store = store if store is not None else InMemoryStateStore()
     requirement = Requirement('req-1', 'Produce a synthetic in-memory artifact describing a greeting.',
                               ('Synthetic output is documented',))
     store.create_project(ProjectState('demo', 'M2.2', 'Produce one bounded synthetic greeting artifact; no real files or commands.',

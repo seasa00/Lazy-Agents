@@ -1,120 +1,159 @@
 # Current milestone
 
-## Status
+**M6 — AI Office Experience COMPLETE.**
+M1 through M5.2 remain complete. **Stop after M6. Do not start M7.**
 
-Completed milestone: **M3 — Tools & Permissions**, including **M3.2 — Approved
-commands, test evidence, and tool limits**. M1, M2 and M3.1 are also complete.
-**M4.1 has not started.**
+The M6 reference implementation uses a broad cozy panorama, left-side navigation,
+light dashboard panels and three horizontally arranged workstations. Independent
+transparent atlas layers compose characters, desks, chairs and role equipment;
+empty matching day/night structural shells contain no employees or furniture.
+Plants and handoff documents remain reusable assets. HTML cards show real names,
+statuses, tasks and review details. Tablet retains the room; mobile stacks stations.
 
-Final full automated suite (2026-10-05): **187 tests passed**. The real-process
-disposable demonstration passed all seven requested steps.
+Existing backend projections, command gates, committed-event deduplication,
+inspection/navigation, usage uncertainty and recovery behavior are preserved.
+No backend logic changes or M7 work are included. Generation prompts and asset
+contracts: `apps/web/features/office/sprites/README.md` and `M6_PROMPTS.md`.
 
-Required live OpenRouter verification passed on 2026-10-05: workflow completed,
-no blocked reason, six successful first-attempt calls using
-`openai/gpt-4o-mini`, no retries or repairs, one review round, 2,618 input and
-601 output tokens (3,219 total), estimated cost USD 0.00075330. Finalization
-validation passed; the previous failure did not recur. The detailed record is in
-[verification.md](verification.md).
+Current reference-pass verification is recorded in `docs/verification.md`.
+Previous M6 verification entries describe earlier visual implementations.
 
-## Implemented
+## Verified M5.2 baseline
 
-- Frozen structured `CommandRequest`: executable plus argument tuple, explicit
-  profile, workspace-relative cwd, restricted environment, timeout/output bounds,
-  trusted actor, attempt/generation and workspace version. No shell-string API.
-- Configured exact command profiles, including `is_test` profiles. Developer
-  requests create pending permission interventions; trusted human controls
-  explicitly approve or deny them. Reviewer and Manager commands are denied.
-- Single-use approvals bind the entire request, canonical workspace root,
-  executable hash, effective environment and configured profile. Stale/mismatched,
-  denied, missing, consumed or invalidated approvals cannot launch.
-- One command at a time. Pending permissions prevent workflow advancement;
-  running commands own the existing pending-operation slot. File mutations and
-  submission capture are denied while a command is running.
-- Scoped cwd validation and restricted child environment; no inherited API keys,
-  startup/loader hooks, Python path, proxy configuration or HOME. `shell=False`,
-  stdin closed, file descriptors closed, new POSIX process session/group.
-- Concurrent bounded stdout/stderr draining, monotonic timeout, exit-code capture,
-  timestamps, duration, truncation flags and immutable log references/results.
-- Pause/cancel checks immediately before launch and during execution. Timeout,
-  pause, cancel and scope invalidation kill the original process group and reap
-  the direct child. Unfinished descendants after leader exit prevent success.
-  Incomplete cleanup keeps the operation reserved and blocks further work.
-- Bounded workspace fingerprint covers every regular file (protected files only
-  as hashes), directories and change metadata. Symlinks/hardlinks/special files
-  fail closed. Before/after/current versions identify stale test evidence.
-- Frozen test evidence is attached to the exact captured submission and Reviewer
-  context. Latest stale/failed/terminated tests cannot be overridden by PASS.
-  Retesting the same profile on current content supersedes its older result.
-- Request, decision, launch and result audit records/events; command results are
-  retained on the run across pause, cancellation and scope changes.
+**M5.2 — Evidence, Usage, Settings, and Recovery UI COMPLETE.**
 
-## Contracts and files
+The Next.js workspace has connected inspection views for all three employees,
+retained runs, task attempts, exact submissions/reviews/revisions, immutable file
+text/diffs, command/test receipts, durable usage, future-run configuration and
+explicit recovery intervention. The backend remains authoritative; one project
+SSE stream invalidates projections, and usage is queried rather than incremented.
+Historical inspection selection does not change current-run command targeting.
 
-- `domain/commands.py`: limits, profiles, requests, permission interventions,
-  audit records, command results, test evidence and approval scope digest.
-- `tools/commands.py`: fingerprinting, restricted environment, bounded POSIX
-  process launch/drain/timeout/cleanup implementation.
-- `tools/gateway.py`, `permissions/policy.py`: existing role gateway plus exact
-  approval, command lifetime, audit and evidence ownership.
-- `orchestration/runner.py`, `controls.py`: trusted command entrypoints, human
-  permission decisions, pending operations, pause/cancel/scope handling.
-- `domain/artifacts.py`, `workflow.py`: frozen submission tests and run-owned
-  command history; real-file snapshots serialize to JSON.
-- `dev/commands.py`: harmless disposable command demonstration.
-- `tests/test_m32.py`: 48 command/evidence/limit/workflow tests.
+Backend additions fill HTTP/read/configuration gaps: settings GET/POST with existing
+versioned/idempotent acknowledgments; inspection GET; artifact metadata/diff fields;
+input/output/cache token accounting; existing recovery-action descriptors; stricter
+secret/environment/private-reasoning redaction and non-echoing validation errors.
+No workflow transition, permission bypass or automatic recovery is introduced.
 
-Paths above are under `apps/api/app`, except tests under `apps/api/tests`.
+Settings support employee name, role, arbitrary manual model slug and system
+instructions. Changes apply **only to newly initialized runs**. Current and
+completed invocations keep captured definitions; restarted runners reconstruct
+those definitions. Tools/permission policy/context policy and execution limits
+remain backend-configured/read-only. Credentials show configured status only.
 
-## Verification
+Protected artifact reads are scoped to an immutable captured submission/file.
+Missing/protected/integrity failures are explicit. Diff markers and original hashes
+are shown; historical evidence/test staleness stays visible. Capture timestamps
+are Unavailable where no timestamp was retained. Reviewer PASS/FAIL, BLOCKED and
+technical errors are distinct. Trusted local command limits remain unchanged.
 
-From `apps/api`:
+Recovery displays phase/task/operation, certainty/reason and retained receipts.
+Only backend-advertised actions are offered, with explicit reason/quiescence where
+required. Resolution leaves execution paused and preserves uncertainty/unknown
+billing. Resume is a separate human action. No automatic resume occurs.
+
+## Verification on 2026-10-05
+
+- **458 backend tests passed** (445 existing + 13 M5.2 tests).
+- **85 frontend tests passed** (59 existing + 25 inspection tests + 1 controller regression).
+- **5 Chromium E2E scenarios passed** (4 existing + 1 complete M5.2 scenario).
+- **5 headed Chromium scenarios passed** against real local FastAPI/SQLite and Next.js.
+- OpenAPI generation, TypeScript checks, production build and `git diff --check` passed.
+- Evidence, usage, uncertain recovery and narrow agent screenshots were inspected.
+
+The headed workflow inspected Manager/Developer/Reviewer, two FAIL/PASS attempts,
+exact submissions, criteria/findings/fixes/unperformed checks, protected file diff,
+command stdout and per-agent accounting. It saved a new model slug, verified the old
+captured configuration, resolved an interrupted Reviewer fence without inventing
+billing certainty, explicitly resumed/completed/refreshed, started another run,
+approved its runtime command permission and verified the new model on a successful
+Developer receipt. It then selected the prior run and restored the old model in
+inspection while current workflow state remained completed. Completed/historical
+agent activity came from bounded durable events. JSON responses contained no secret
+sentinel, credential names, authorization headers or environment fields. The
+preserved browser suite also verified pause-requested/paused/resume, denial/cancel,
+refresh during execution and SSE disconnect/reconnect/reset. No direct API mutations
+were needed for normal browser actions. No billed live-provider call was made.
+
+## Startup
+
+Install backend dependencies in a virtualenv; frontend dependencies with `npm ci`.
+From `apps/api`, with its virtualenv activated:
 
 ```bash
-PYTHONPATH=. python3 -m unittest discover -s tests -q
-PYTHONPATH=. python3 -m app.dev.commands
+PYTHONPATH=. python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-Observed: **180 tests passed**. Demo: workflow **completed**, test command
-**succeeded**, exit **0**, stdout `1 test passed`. Reviewer received captured
-files and tests. Explicit denial caused no execution. Slow command was
-**canceled**, its process was reaped. A later edit made live test evidence stale
-while the historical submission and its reviewed test evidence stayed unchanged.
+From `apps/web` in a second terminal:
 
-Final suite rerun on 2026-10-05: **187 tests passed**. Required live OpenRouter
-verification also passed; see [verification.md](verification.md) for usage and
-cost details.
+```bash
+npm run dev -- --port 3000
+```
 
-The demo explicitly approves only its built-in harmless commands in disposable
-workspaces; it does not approve arbitrary user project commands.
+Open `http://127.0.0.1:3000`. For reproducible completed evidence and an interrupted
+Reviewer gate, replace the backend command with:
 
-## Limits and limitations
+```bash
+AI_OFFICE_M52_FIXTURE=1 PYTHONPATH=. python -m uvicorn app.dev.browser:app --host 127.0.0.1 --port 8000 --workers 1
+```
 
-- Default per-request timeout: 10 s; hard configured maximum: 30 s. Default
-  retained output: 8 KiB per stream, maximum 64 KiB per stream. Excess is drained
-  and discarded with truncation flags. Cleanup adds at most bounded waits beyond
-  the execution timeout; OS spawn and filesystem IO themselves are synchronous.
-- 20 command launches/results per run (also enforced per gateway lifetime),
-  60 permission requests per gateway lifetime; pause/resume never reset them.
-  Launch errors consume their approval and launch budget. Gateway replacement is
-  trusted configuration, not an agent capability.
-- Fingerprints: 2 MiB total file content, 2,000 entries, depth limit 64; executable
-  hash bound 128 MiB. Existing M3.1 file/result and role-context bounds still apply.
-- **Approved commands are trusted local code execution, not OS sandboxing.**
-  They inherit the service user's filesystem/network privileges and can access
-  outside paths, alter protected files, spawn shells or escape the process group.
-  Cwd/environment restrictions are launch controls, not containment.
-- POSIX process groups and descriptor APIs, verified on macOS. Descendants that
-  detach from the original group are not guaranteed to be killed. No Windows
-  implementation, resource/cgroup sandbox, network isolation or process-tree
-  containment guarantee is provided.
-- Fingerprints are sequential, not atomic against external writers. Interpreter
-  libraries and other dependencies outside the workspace are not snapshotted.
-  A privileged writer or concurrent process can race checks or defeat metadata
-  assumptions. Command-created workspace files make read-only test evidence stale.
-- All approvals, logs, evidence and state remain in memory; no restart recovery,
-  crash-atomic filesystem/state transaction, SQLite or M4.1 work.
-- Provider-native tool dispatch remains disabled; trusted runner entrypoints own
-  actor identity and permissions. No package-installation/deployment tools,
-  deletion tool, FastAPI or frontend were added.
+This uses disposable SQLite/workspaces and deterministic providers. Inspect
+Completed evidence fixture, then explicitly resolve/resume Interrupted recovery
+fixture before starting another run. Normal startup remains offline synthetic
+execution; provider/workspace wiring is backend-owned. Settings alone do not enable
+a live provider. No billed live-provider browser check was performed.
 
-See [contracts.md](contracts.md) and [verification.md](verification.md).
+## Verification commands
+
+From `apps/api`, virtualenv activated:
+
+```bash
+PYTHONPATH=. python -m unittest discover -s tests -q
+```
+
+From `apps/web`, with that virtualenv in PATH:
+
+```bash
+npm run contracts
+npm test
+npm run typecheck
+npm run test:e2e
+npm run verify:browser
+npm run build
+```
+
+`verify:browser` drives the entire suite in headed Chromium; `verify:m52` drives
+only the M5.2 scenario. Tests own ports 8011/3011. Screenshots/traces are under
+ignored `apps/web/test-results/`. Do not run dev and build concurrently because
+both use Next.js output files. Run `git diff --check` from the repository root.
+
+## Limits
+
+Usage supports retained run/per-agent and whole-project totals; per-task attribution
+is unavailable. Unknown usage/pricing is Incomplete, not zero. Current activity
+retains the latest 250 delivered project events since opening the view. Workspace
+selection, plan edits, instructions/arbitrary blocker inputs and capability/limit
+changes remain backend-only. Corrupt/missing sidecars may need operator repair.
+No IDE, auth/cloud, routing, new agent kinds or M7 work.
+See [contracts.md](contracts.md), [verification.md](verification.md) and README.
+
+## Files introduced or extended for M5.2
+
+- Frontend detail components: `features/agents/AgentDetail.tsx`,
+  `features/artifacts/ArtifactViewer.tsx`, `features/usage/UsagePanel.tsx`,
+  `features/settings/SettingsPanel.tsx`, and workspace `Inspection.tsx`,
+  `TaskHistory.tsx`, `ToolActivity.tsx`, `RecoveryPanel.tsx`.
+- Frontend integration/contracts: `features/workspace/Workspace.tsx`,
+  `lib/api/{types.ts,client.ts,proxy.ts,openapi.d.ts}`, `lib/state/context.tsx`,
+  `app/globals.css`, `package.json`, `playwright.config.ts`.
+- Frontend verification: `tests/inspection.test.tsx`,
+  `tests/controller.test.tsx`, `e2e/00-inspection.spec.ts`, `e2e/workflow.spec.ts`.
+- Backend: `app/main.py`, `app/api/{schemas.py,service.py}`,
+  `app/domain/projects.py`, `app/orchestration/recovery.py`,
+  `app/usage/aggregation.py`, `app/persistence/{store.py,operations.py,sqlite.py}`,
+  `app/dev/{browser.py,inspection.py}`,
+  `tests/test_m52.py`.
+- Documentation: README, current milestone, contracts, verification and decisions.
+
+Existing uncommitted M4/M5.1 work is preserved; this inventory describes M5.2's
+changes, not the entire workspace diff from its older Git baseline.

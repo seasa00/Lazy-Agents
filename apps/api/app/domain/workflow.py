@@ -8,6 +8,19 @@ from app.domain.reviews import ReviewRound, RevisionBrief
 from app.orchestration.limits import ExecutionLimits
 from app.usage.records import LLMCallRecord
 from app.domain.commands import CommandResult
+from app.domain.agents import AgentConfigSnapshot
+from app.domain.recovery import ExecutionCheckpoint, RecoveryState
+
+
+@dataclass(frozen=True, slots=True)
+class InvocationRecord:
+    id: str
+    agent_id: str
+    config_digest: str
+    phase: str
+    generation: int
+    protocol_version: int = 1
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +46,12 @@ class WorkflowState:
     accepted: tuple[str, ...] = ()
     call_records: tuple[LLMCallRecord, ...] = ()
     final_result: FinalResult | None = None
+    agent_snapshots: tuple[AgentConfigSnapshot, ...] = ()
+    invocation_records: tuple[InvocationRecord, ...] = ()
+    checkpoint: ExecutionCheckpoint | None = None
+    recovery_epoch: int = 0
+    recovery: RecoveryState | None = None
+    workspace_tools: bool = False
 
     def to_dict(self):
         def encode(value):

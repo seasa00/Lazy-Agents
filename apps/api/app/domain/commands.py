@@ -92,6 +92,7 @@ class CommandAuditRecord:
     approval_id: str | None
     outcome: str
     reason: str
+    protocol_version: int = 1
 
 
 @dataclass(frozen=True, slots=True)

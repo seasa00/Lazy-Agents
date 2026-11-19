@@ -5,7 +5,8 @@ from threading import RLock
 from uuid import uuid4
 import json
 from app.domain.agents import AgentKind
-from app.domain.artifacts import CapturedSubmission, ToolCallRecord, content_hash
+from app.domain.artifacts import CapturedSubmission, ToolCallRecord, FileChange, content_hash
+from app.domain.recovery import ExecutionCheckpoint, ExecutionOperation, OperationStage, OutcomeCertainty
 from app.tools.files import WorkspaceFiles, FileConflict
 from app.tools.submissions import capture
 from app.domain.commands import (CommandLimits, CommandApproval, CommandAuditRecord,
@@ -39,6 +40,9 @@ class FileToolResult:
 
 class WorkspaceToolGateway:
     def __init__(self, policy, *, before_mutation=None, command_profiles=(), command_limits=CommandLimits()):
+        self.audit_sink = lambda record, approval=None: None
+        self.operation_sink = lambda operation: operation
+        self._command_operation = None
         self.policy = policy
         self._files = WorkspaceFiles(policy)
         self.before_mutation = before_mutation or self._deny_unbound
@@ -57,6 +61,47 @@ class WorkspaceToolGateway:
         self._active_command = None
         self._command_requests = 0
         self._command_launches = 0
+
+    def _persist_operation(self, operation):
+        return self.operation_sink(operation) or operation
+
+    def _prepared(self, identity, kind, scope_request, **kwargs):
+        cp = ExecutionCheckpoint('', '', 'develop', scope_request.generation, 0, 1,
+            attempt_id=scope_request.attempt_id, operation_id=identity, boundary=kind + '.prepared', safe_phase='develop')
+        return self._persist_operation(ExecutionOperation(identity, kind, cp, **kwargs))
+
+    def restore(self, operations, approvals, run, history=()):
+        """Restore application-owned evidence/counters; never launch or signal a process."""
+        self._approvals = {a.id: a for a in approvals}
+        self._records = [r for r in history if isinstance(r, ToolCallRecord) and not r.id.endswith(':intent')]
+        self._command_records = [r for r in history if isinstance(r, CommandAuditRecord)]
+        self._command_requests = sum(getattr(r, 'action', '') == 'request' for r in history)
+        self._command_launches = sum(getattr(r, 'action', '') == 'intent' for r in history)
+        wf = run.workflow
+        if wf is None:
+            return
+        results = {r.id: r for r in wf.command_results}
+        for op in operations:
+            if op.kind == 'command' and isinstance(op.result, CommandResult):
+                results.setdefault(op.result.id, op.result)
+            if op.kind != 'file' or op.checkpoint.generation != run.execution_generation:
+                continue
+            if op.certainty is OutcomeCertainty.CONFIRMED_SUCCESS and op.change:
+                scope = (op.checkpoint.attempt_id, op.checkpoint.generation)
+                changes = self._changes.setdefault(scope, {})
+                baseline = changes.get(op.path, (op.change.before, None))[0]
+                if baseline == op.change.content:
+                    changes.pop(op.path, None)
+                else:
+                    changes[op.path] = (baseline, op.change.content)
+            if isinstance(op.result, CapturedSubmission) and op.certainty is OutcomeCertainty.CONFIRMED_SUCCESS:
+                self._submissions[op.result.id] = op.result
+                self._sealed.add((op.result.attempt_id, op.result.generation))
+        for sub in wf.submissions:
+            if sub.files:
+                self._submissions[sub.id] = sub.files
+                self._sealed.add((sub.attempt_id, sub.generation))
+        self._command_results = list(results.values())
 
     @property
     def approvals(self):
@@ -99,9 +144,11 @@ class WorkspaceToolGateway:
         return digest, environment, profile
 
     def _command_record(self, action, request, approval_id, outcome, reason=''):
-        self._command_records.append(CommandAuditRecord('tool_' + uuid4().hex, action,
+        record = CommandAuditRecord('tool_' + uuid4().hex, action,
             'human' if action == 'decision' else 'system' if action == 'invalidate' else request.actor.value, request.attempt_id,
-            request.generation, approval_id, outcome, reason))
+            request.generation, approval_id, outcome, reason, 2)
+        self.audit_sink(record, self._approvals.get(approval_id))
+        self._command_records.append(record)
 
     def request_command(self, request):
         """Record a pending intervention; this never authorizes execution."""
@@ -165,12 +212,20 @@ class WorkspaceToolGateway:
                 self.before_mutation(request)  # Final pause/cancel check before Popen.
                 self._approvals[approval_id] = replace(approval, status='consumed')
                 self._command_launches += 1
+                self._command_record('intent', request, approval_id, 'pending')
+                operation = self._prepared('command_exec_' + uuid4().hex, 'command', request,
+                    request=request, approval_id=approval_id, operation=request.profile)
+                operation = self._persist_operation(operation.evolve(stage=OperationStage.EXECUTING))
+                self._command_operation = operation
                 try:
                     running = launch(request, approval_id, profile.is_test, self.policy.root, environment)
                 except OSError:
                     running = CommandResult('command_' + uuid4().hex, approval_id, request, profile.is_test,
                         'error', None, '', '', False, False, datetime.now(timezone.utc).isoformat(), 0,
                         request.workspace_version, None, None, True)
+                if not isinstance(running, CommandResult):
+                    operation = self._persist_operation(operation.evolve(pid=running.process.pid))
+                    self._command_operation = operation
                 self._active_command = running
                 self._command_record('launch', request, approval_id, 'started' if not isinstance(running, CommandResult) else 'error')
                 return running
@@ -186,6 +241,11 @@ class WorkspaceToolGateway:
         with self._command_lock:
             if self._active_command is not running:
                 raise ValueError('command ownership mismatch')
+            certainty = (OutcomeCertainty.CONFIRMED_SUCCESS if result.succeeded else
+                         OutcomeCertainty.CONFIRMED_FAILURE if result.cleanup_complete else OutcomeCertainty.UNCERTAIN)
+            if self._command_operation:
+                self._persist_operation(self._command_operation.evolve(stage=OperationStage.SETTLED,
+                    certainty=certainty, result=result))
             self._command_results.append(result)
             if result.cleanup_complete:
                 self._active_command = None
@@ -221,6 +281,11 @@ class WorkspaceToolGateway:
             return self._execute_file(request)
 
     def _execute_file(self, request):
+        operation_id = 'file_' + uuid4().hex
+        self.audit_sink(ToolCallRecord(operation_id + ':intent', request.actor.value,
+            request.operation, request.attempt_id, request.generation, request.path,
+            request.submission_id, 'pending', protocol_version=2))
+        execution = None
         outcome, before, after = 'denied', None, None
         try:
             decision = self.policy.decide(request.actor, request.operation, request.submission_id)
@@ -230,6 +295,7 @@ class WorkspaceToolGateway:
                 raise ValueError('attempt and generation required')
             scope = (request.attempt_id, request.generation)
             op = request.operation
+            execution = self._prepared(operation_id, 'file', request, operation=op, path=request.path)
             if op in {'write', 'edit', 'capture_submission'}:
                 if self.command_active:
                     raise ValueError('workspace mutation denied while command is active')
@@ -252,6 +318,7 @@ class WorkspaceToolGateway:
                         tests=self.test_evidence(request.attempt_id, request.generation, version=version))
                 self._check_result(FileToolResult(submission=snapshot))
                 self.before_mutation(request)
+                execution = self._persist_operation(execution.evolve(stage=OperationStage.EXECUTING, result=snapshot))
                 self._submissions[snapshot.id] = snapshot
                 self._sealed.add(scope)
                 result = FileToolResult(submission=snapshot)
@@ -296,6 +363,13 @@ class WorkspaceToolGateway:
                     raise ValueError('file content must be UTF-8 text')
                 encoded = data.encode('utf-8')
                 self._check_result(FileToolResult(content_hash=content_hash(encoded)))
+                prior = self._files.read(request.path)
+                if (None if prior is None else content_hash(prior)) != request.expected_hash:
+                    raise FileConflict('expected hash conflict')
+                change = FileChange(request.path, prior, encoded, '')
+                execution = self._persist_operation(execution.evolve(change=change, before_hash=change.before_hash,
+                    after_hash=change.content_hash))
+                execution = self._persist_operation(execution.evolve(stage=OperationStage.EXECUTING))
                 previous = self._files.write(request.path, encoded, request.expected_hash,
                                             lambda: self.before_mutation(request))
                 changes = self._changes.setdefault(scope, {})
@@ -318,6 +392,13 @@ class WorkspaceToolGateway:
             outcome = 'error'
             raise ValueError('unsupported or inaccessible workspace path/content') from exc
         finally:
-            self._records.append(ToolCallRecord('file_' + uuid4().hex, request.actor.value,
+            if execution:
+                certainty = (OutcomeCertainty.CONFIRMED_SUCCESS if outcome == 'succeeded' else
+                    OutcomeCertainty.UNCERTAIN if execution.stage is OperationStage.EXECUTING and outcome == 'error' else
+                    OutcomeCertainty.CONFIRMED_FAILURE)
+                execution = self._persist_operation(execution.evolve(stage=OperationStage.SETTLED, certainty=certainty))
+            record = ToolCallRecord(operation_id, request.actor.value,
                 request.operation, request.attempt_id, request.generation, request.path,
-                request.submission_id, outcome, before, after))
+                request.submission_id, outcome, before, after, 2)
+            self.audit_sink(record)
+            self._records.append(record)

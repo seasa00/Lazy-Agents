@@ -1,0 +1,3 @@
+import { defineConfig } from 'vite';
+import { fileURLToPath } from 'node:url';
+export default defineConfig({ root: fileURLToPath(new URL('../../../office-pixel', import.meta.url)), esbuild: { jsx: 'automatic' }, resolve: { alias: { 'react/jsx-dev-runtime': fileURLToPath(new URL('../node_modules/react/jsx-dev-runtime.js', import.meta.url)), 'react-dom/client': fileURLToPath(new URL('../node_modules/react-dom/client.js', import.meta.url)), 'react/jsx-runtime': fileURLToPath(new URL('../node_modules/react/jsx-runtime.js', import.meta.url)), react: fileURLToPath(new URL('../node_modules/react/index.js', import.meta.url)) } }, server:{host:'127.0.0.1',port:3013} });

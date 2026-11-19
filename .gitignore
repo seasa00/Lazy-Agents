@@ -12,3 +12,14 @@ data/
 
 node_modules/
 .next/
+
+# SQLite sidecars and captured immutable evidence
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.db.artifacts/
+*.sqlite.artifacts/
+
+# Local Python development environments
+.venv/

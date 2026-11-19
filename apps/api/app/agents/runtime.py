@@ -130,6 +130,8 @@ class AgentRuntime:
         output_schema: str | None = None,
         workflow_context: dict[str, Any] | None = None,
         before_call: Any = None,
+        on_call_started: Any = None,
+        on_call_finished: Any = None,
     ) -> AgentInvocation:
         """Build context, make bounded calls, and validate one role output."""
 
@@ -177,6 +179,11 @@ class AgentRuntime:
             raise ValueError("max_attempts must be positive and max_repairs must be non-negative")
 
         records: list[LLMCallRecord] = []
+        def retain(record, output=None):
+            if on_call_finished is not None:
+                on_call_finished(record, output)
+            records.append(record)
+
         transient_attempts = 0
         repairs = 0
         attempt_number = 0
@@ -191,11 +198,17 @@ class AgentRuntime:
             attempt_number += 1
             purpose = "initial" if attempt_number == 1 else ("repair" if repairs else "retry")
             call_id = f"{invocation_id}:call:{attempt_number}"
+            if on_call_started is not None:
+                reserved_call = LLMCallRecord(call_id, invocation_id, attempt_number, purpose,
+                    provider_name, snapshot.model, 'submitted', None, None,
+                    UsageProvenance.UNKNOWN, UsageCompleteness.UNKNOWN,
+                    self.pricing.price_for(snapshot.model) if self.pricing else None, None)
+                on_call_started(reserved_call)
             try:
                 response = provider.complete(current_request)
             except ProviderTransientError as exc:
                 transient_attempts += 1
-                records.append(self._failed_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, exc))
+                retain(self._failed_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, exc))
                 if transient_attempts >= attempts_budget:
                     raise ProviderInvocationError(
                         f"provider call budget exhausted after {transient_attempts} attempts: {exc}",
@@ -205,15 +218,15 @@ class AgentRuntime:
                 self.sleeper(delay)
                 continue
             except ProviderError as exc:
-                records.append(self._failed_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, exc))
+                retain(self._failed_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, exc))
                 raise ProviderInvocationError(f"provider call failed: {exc}", call_records=tuple(records)) from exc
 
             if response.tool_calls:
-                records.append(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "failed", "UndeclaredToolError", "provider returned tool calls"))
+                retain(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "failed", "UndeclaredToolError", "provider returned tool calls"))
                 names = ", ".join(call.name for call in response.tool_calls)
                 raise UndeclaredToolError(f"provider returned undeclared tool calls: {names}", call_records=tuple(records))
             if not response.provider_request_id.strip():
-                records.append(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "failed", "InvocationError", "provider response did not include a request id"))
+                retain(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "failed", "InvocationError", "provider response did not include a request id"))
                 raise InvocationError("provider response did not include a request id", call_records=tuple(records))
             try:
                 if schema == 'manager_decision.v1':
@@ -224,7 +237,7 @@ class AgentRuntime:
                     output = parse_agent_output(agent.kind, response.output)
             except (ContractValidationError, ValueError) as exc:
                 message = f"{agent.kind.value} output failed {schema}: {exc}"
-                records.append(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "failed", "OutputValidationError", message))
+                retain(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "failed", "OutputValidationError", message))
                 if repairs < repairs_budget:
                     repairs += 1
                     current_request = ProviderRequest(
@@ -241,7 +254,7 @@ class AgentRuntime:
                     continue
                 raise OutputValidationError(message, call_records=tuple(records)) from exc
 
-            records.append(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "succeeded", None, None))
+            retain(self._response_record(call_id, invocation_id, attempt_number, purpose, provider_name, snapshot.model, response, "succeeded", None, None), output)
             total_cost = self._sum_costs(records)
             return AgentInvocation(
                 invocation_id=invocation_id,

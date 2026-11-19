@@ -1,0 +1,58 @@
+@scope (.office-pixel) {
+button, p, h2, h3, a, pre, code, input, select { all: revert; }
+:scope { --bg: #cbbb97; --ink: #2b1a12; --hot: #ff5a1f; --pale: #efe4c8; --bd-up: #cbbb97; --bd-lo: #2b1a12; box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+:scope[data-theme='night'] { --bg: #141f2c; --ink: #04050a; --hot: #fcee0a; --pale: #cfe3ea; --bd-up: #141f2c; --bd-lo: #04050a; }
+
+* { box-sizing: border-box; }
+
+:scope { background: var(--bg); color: var(--ink); font-family: ui-monospace, 'Courier New', monospace; overflow: hidden; transition: background .2s steps(2); }
+.shell { position: absolute; inset: 0; display: flex; background: var(--bd-up); }
+.stage-wrap { position: relative; flex: 1; min-width: 0; height: 100%; }
+.stage { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; background: var(--bd-up); }
+.stage::before { content: ''; position: absolute; inset: 0; background: var(--bd-lo); clip-path: polygon(0 30%, 100% 90%, 100% 100%, 0 100%); } /* the diagonal two-tone backdrop fills the whole stage */
+.stage canvas { position: relative; image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+
+/* status strip: agents + connection */
+.sb { position: absolute; top: 6px; left: 8px; right: 8px; display: flex; gap: 5px; align-items: center; z-index: 3; pointer-events: none; font: 11px/1 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+.sb > * { pointer-events: auto; }
+.sb-chip { display: inline-flex; gap: 5px; align-items: center; padding: 3px 7px; background: color-mix(in srgb, var(--pale) 72%, transparent); color: var(--ink); border: 1px solid color-mix(in srgb, var(--ink) 30%, transparent); cursor: pointer; font: inherit; opacity: .78; }
+.sb-chip:hover, .sb-chip.on { opacity: 1; }
+.sb-chip.on { border-color: var(--chip-acc); box-shadow: inset 0 -2px 0 var(--chip-acc); }
+.sb-chip i { width: 7px; height: 7px; background: var(--chip-acc); }
+.sb-chip em { font-style: normal; opacity: .65; text-transform: capitalize; }
+.sb-chip.r-mgr { --chip-acc: #2c5a45; } .sb-chip.r-dev { --chip-acc: #2f79b3; } .sb-chip.r-rev { --chip-acc: #7d5c94; }
+:scope[data-theme='night'] .sb-chip.r-mgr { --chip-acc: #2fbf9a; } :scope[data-theme='night'] .sb-chip.r-dev { --chip-acc: #1ac3ea; } :scope[data-theme='night'] .sb-chip.r-rev { --chip-acc: #a78bfa; }
+.sb-conn { margin-left: auto; font-size: 10px; letter-spacing: .05em; padding: 3px 6px; background: color-mix(in srgb, var(--pale) 60%, transparent); color: var(--ink); }
+.sb-conn.ok { color: #2c5a45; } .sb-conn.warn { color: #a8560f; } .sb-conn.err { color: #b3261e; font-weight: 700; }
+:scope[data-theme='night'] .sb-conn.ok { color: #3ddc97; } :scope[data-theme='night'] .sb-conn.warn { color: #e8d84a; } :scope[data-theme='night'] .sb-conn.err { color: #ff5d7a; }
+.sb button:focus-visible, .vc button:focus-visible, .cc button:focus-visible { outline: 2px dashed var(--hot); outline-offset: 1px; }
+
+/* view controls (bottom-right of the stage) */
+.vc { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 5px; align-items: center; z-index: 3; font: 11px/1 system-ui, sans-serif; opacity: .55; transition: opacity .15s; }
+.vc:hover, .vc:focus-within { opacity: 1; }
+.vc button { font: inherit; padding: 4px 8px; background: color-mix(in srgb, var(--pale) 78%, transparent); color: var(--ink); border: 1px solid color-mix(in srgb, var(--ink) 40%, transparent); cursor: pointer; }
+.vc button:hover { background: var(--pale); }
+.vc-scale, .vc-note { color: var(--ink); opacity: .7; padding: 0 4px; } .vc-note { background: var(--pale); padding: 3px 6px; opacity: 1; }
+
+/* compact card (small windows) */
+.cc { position: absolute; left: 8px; top: 34px; width: 178px; max-width: 46%; z-index: 4; padding: 6px 8px 6px 10px; background: color-mix(in srgb, var(--pale) 94%, transparent); color: var(--ink); border: 1px solid color-mix(in srgb, var(--ink) 45%, transparent); border-left: 4px solid var(--cc-acc, var(--ink)); font: 12px/1.35 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+.cc-mgr { --cc-acc: #2c5a45; } .cc-dev { --cc-acc: #2f79b3; } .cc-rev { --cc-acc: #7d5c94; }
+:scope[data-theme='night'] .cc-mgr { --cc-acc: #2fbf9a; } :scope[data-theme='night'] .cc-dev { --cc-acc: #1ac3ea; } :scope[data-theme='night'] .cc-rev { --cc-acc: #a78bfa; }
+.cc strong { display: block; padding-right: 16px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .cc p { margin: 2px 0 4px; font-size: 11.5px; } .cc small { opacity: .65; font-size: 10.5px; } .cc-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.cc-x { position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; padding: 0; font-size: 10px; background: transparent; border: 0; color: var(--ink); cursor: pointer; opacity: .6; }
+.cc-go { font: inherit; font-size: 11px; padding: 2px 8px; background: var(--cc-acc); color: #fff; border: 0; cursor: pointer; }
+:scope[data-theme='night'] .cc-go { color: #04141c; }
+
+.dev { position: absolute; left: max(8px, env(safe-area-inset-left, 0px)); bottom: max(8px, env(safe-area-inset-bottom, 0px)); width: 188px; max-width: calc(100vw - 16px); background: color-mix(in srgb, var(--pale) 78%, transparent); color: var(--ink); border: 1px solid color-mix(in srgb, var(--ink) 35%, transparent); font-size: 10px; line-height: 1.3; opacity: .5; transition: opacity .15s; }
+.dev:hover, .dev:focus-within { opacity: 1; }
+.dev > header { display: flex; justify-content: space-between; padding: 4px 7px; cursor: pointer; font-weight: 700; letter-spacing: .04em; opacity: .8; }
+.dev .body { padding: 2px 7px 7px; display: grid; gap: 5px; max-height: min(56vh, 400px); overflow: auto; }
+.dev .row { display: grid; gap: 2px; } .dev .row > label { font-weight: 700; opacity: .6; text-transform: uppercase; font-size: 9px; }
+.dev .chips { display: flex; flex-wrap: wrap; gap: 2px; } .dev .handoffs { display: grid; gap: 2px; }
+.dev button { font: inherit; color: var(--ink); background: transparent; border: 1px solid color-mix(in srgb, var(--ink) 40%, transparent); padding: 1px 5px; cursor: pointer; text-align: left; }
+.dev button:hover { background: rgba(0,0,0,.08); } .dev button:focus-visible { outline: 2px dashed var(--hot); outline-offset: 1px; }
+.dev button[aria-pressed='true'] { background: var(--ink); color: var(--pale); font-weight: 700; }
+
+}
+.office-pixel { position: relative; width: 100%; height: 100%; isolation: isolate; }
+.office-pixel :where(*) { border-radius: 0; }

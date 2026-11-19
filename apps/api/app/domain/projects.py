@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Any, Mapping
 
 from app.agents.contracts import DecisionRecord, ManagerPlan, Requirement
+from app.domain.agents import AgentDefinition
 from app.domain.tasks import Task
 from app.domain.workflow import WorkflowState
 
@@ -107,8 +108,13 @@ class ProjectState:
     runs: tuple[RunState, ...] = ()
     active_run_id: str | None = None
     version: int = 1
+    agent_definitions: tuple[AgentDefinition, ...] = ()
 
     def __post_init__(self) -> None:
+        if self.agent_definitions and {a.kind.value for a in self.agent_definitions} != {"manager", "developer", "reviewer"}:
+            raise ValueError("configuration requires exactly the three agent kinds")
+        if len(self.agent_definitions) not in {0, 3}:
+            raise ValueError("configuration requires three agents")
         if not self.id.strip() or not self.name.strip() or not self.goal.strip():
             raise ValueError("project id, name, and goal are required")
         if self.requirement_version < 1 or self.version < 1:
@@ -157,6 +163,7 @@ class ProjectState:
             "decisions": [item.to_dict() for item in self.decisions],
             "tasks": [item.to_dict() for item in self.tasks],
             "runs": [item.to_dict() for item in self.runs],
+            "agent_definitions": [a.to_dict() for a in self.agent_definitions],
             "active_run_id": self.active_run_id,
             "version": self.version,
         }

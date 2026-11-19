@@ -1,6 +1,7 @@
 """Sequential bounded workflow. Providers return proposals; reducers commit facts."""
 from dataclasses import replace
 from uuid import uuid4
+from pathlib import Path
 from app.agents.contracts import (
     DecisionAction, DeveloperSubmission, FileReference, ManagerPlan, ReviewReference,
     ReviewVerdict, SubmissionReference, TaskBrief, TaskSummary,
@@ -11,7 +12,8 @@ from app.domain.agents import AgentKind, default_agent_definitions
 from app.domain.projects import RunStatus
 from app.domain.events import DomainEvent
 from app.domain.tasks import Task, TaskStatus
-from app.domain.workflow import WorkflowState
+from app.domain.workflow import WorkflowState, InvocationRecord
+from app.domain.recovery import (ExecutionOperation, OperationStage, OutcomeCertainty, checkpoint, retain_calls)
 from app.domain.submissions import TaskAttempt, SubmissionManifest
 from app.domain.reviews import ReviewRound, RevisionBrief
 from app.orchestration.controls import commit_run, block_state, WorkflowControls
@@ -37,6 +39,12 @@ class _NoOperation(Exception):
 class WorkflowRunner:
     def __init__(self, store, project_id, run_id, provider, *, runtime=None, definitions=None, gateway=None):
         self.store, self.project_id, self.run_id = store, project_id, run_id
+        from app.orchestration.recovery import RecoveryCoordinator
+        RecoveryCoordinator(store).ensure_startup(project_id, run_id)
+        saved = store.get_run_metadata(project_id, run_id)
+        if (saved.active and saved.workflow and saved.workflow.workspace_tools
+                and not isinstance(gateway, WorkspaceToolGateway)):
+            raise ValueError('workspace recovery requires the configured workspace gateway')
         self.provider = provider
         self.runtime = runtime or AgentRuntime()
         self.definitions = definitions or default_agent_definitions()
@@ -44,11 +52,41 @@ class WorkflowRunner:
         self.gateway = InMemoryToolGateway() if self.workspace_gateway else (gateway or InMemoryToolGateway())
         if self.workspace_gateway:
             self.workspace_gateway.before_mutation = self._guard_file_mutation
+            self.workspace_gateway.audit_sink = lambda record, approval=None: self.store.record_tool(
+                self.project_id, self.run_id, record, approval=approval)
+        self._gateway_epoch = self.run.workflow.recovery_epoch if self.run.workflow else 0
+        if self.workspace_gateway:
+            self.workspace_gateway.operation_sink = self._record_gateway_operation
+            self.workspace_gateway.restore(self.store.operations(project_id, run_id),
+                self.store.approvals(project_id, run_id), self.run, self.store.tool_history(project_id, run_id))
         self.controls = WorkflowControls(store, project_id, run_id, command_gateway=self.workspace_gateway)
+
+    def _record_gateway_operation(self, operation):
+        cp = operation.checkpoint
+        if not cp.project_id:
+            r = self.run
+            project = self.store.get_project(self.project_id)
+            attempt = next((a for a in r.workflow.attempts if a.id == cp.attempt_id), None) if r.workflow else None
+            cp = replace(cp, project_id=self.project_id, run_id=self.run_id, phase=r.phase,
+                         requirement_version=project.requirement_version, recovery_epoch=self._gateway_epoch,
+                         task_id=attempt.task_id if attempt else r.current_task_id,
+                         invocation_id=r.workflow.pending if r.workflow and r.workflow.pending and r.workflow.pending.startswith('op_') else None,
+                         safe_phase=r.workflow.checkpoint.safe_phase if r.workflow and r.workflow.checkpoint else r.phase,
+                         last_safe_boundary=r.workflow.checkpoint.last_safe_boundary if r.workflow and r.workflow.checkpoint else 'workflow.initialized')
+            operation = replace(operation, checkpoint=cp)
+        self.store.record_operation(operation)
+        return operation
+
+    def _execution_gate(self):
+        r = self.run
+        return not self.store.needs_recovery(self.project_id, self.run_id) and not (
+            r.workflow and r.workflow.recovery and r.workflow.recovery.requires_resume)
 
     def request_command(self, request):
         """Developer asks; only controls.resolve_command can supply human approval."""
         gateway = self.workspace_gateway
+        if not self._execution_gate():
+            raise ValueError('restart requires reconciliation and explicit resume')
         if gateway is None:
             raise ValueError('no workspace gateway configured')
         results, errors = [], []
@@ -76,9 +114,12 @@ class WorkflowRunner:
     def command_tool(self, request, approval_id):
         """Launch under the control lock, drain outside it, then retain every result."""
         gateway = self.workspace_gateway
+        if not self._execution_gate():
+            raise ValueError('restart requires reconciliation and explicit resume')
         if gateway is None:
             raise ValueError('no workspace gateway configured')
         token = 'command_op_' + uuid4().hex
+        command_epoch = self.run.workflow.recovery_epoch
         running, errors = [], []
         def reserve(p):
             r = p.run(self.run_id)
@@ -99,7 +140,8 @@ class WorkflowRunner:
             raise errors[0]
         def stop_reason():
             r = self.run
-            if r.status is RunStatus.CANCELED or r.execution_generation != request.generation:
+            if (r.status is RunStatus.CANCELED or r.execution_generation != request.generation
+                    or r.workflow.recovery_epoch != command_epoch):
                 return 'canceled'
             if r.status in {RunStatus.PAUSED, RunStatus.PAUSE_REQUESTED}:
                 return 'paused'
@@ -118,7 +160,9 @@ class WorkflowRunner:
             final.append(current)
             wf = replace(r.workflow, pending=None if r.workflow.pending == token and current.cleanup_complete else r.workflow.pending,
                          command_results=(*r.workflow.command_results, current))
-            status = RunStatus.PAUSED if r.status is RunStatus.PAUSE_REQUESTED else r.status
+            owns_pending = (r.workflow.pending == token and r.execution_generation == request.generation
+                            and r.workflow.recovery_epoch == command_epoch)
+            status = RunStatus.PAUSED if owns_pending and r.status is RunStatus.PAUSE_REQUESTED else r.status
             after, events = commit_run(p, replace(r, workflow=wf, status=status), 'command.completed', payload={
                 'operation_id': token, 'command_id': current.id, 'approval_id': approval_id,
                 'outcome': current.outcome, 'exit_code': current.exit_code})
@@ -132,7 +176,9 @@ class WorkflowRunner:
 
     def _guard_file_mutation(self, request):
         r = self.run
-        if (r.status is not RunStatus.RUNNING or not r.approved or r.phase != 'develop'
+        if ((not self._execution_gate() and not getattr(self, '_admitting_recovery', False)) or r.workflow.recovery_epoch != self._gateway_epoch
+                or (r.status is not RunStatus.RUNNING and not (getattr(self, '_admitting_recovery', False)
+                    and request.operation == 'capture_submission' and r.status in {RunStatus.PAUSED, RunStatus.WAITING_FOR_USER})) or not r.approved or r.phase != 'develop'
                 or not r.workflow or not r.workflow.attempts
                 or r.workflow.attempts[-1].id != request.attempt_id
                 or r.execution_generation != request.generation):
@@ -144,6 +190,8 @@ class WorkflowRunner:
         Provider tool calls remain unsupported. The caller supplies application-owned
         role/attempt identity, never identity taken from model-generated arguments.
         """
+        if not self._execution_gate():
+            raise ValueError('restart requires reconciliation and explicit resume')
         if self.workspace_gateway is None:
             raise ValueError('no workspace gateway configured')
         result, failure = [], []
@@ -169,6 +217,11 @@ class WorkflowRunner:
     def initialize(self, limits=ExecutionLimits()):
         def apply(p):
             r = p.run(self.run_id)
+            if self.workspace_gateway:
+                root = self.workspace_gateway.policy.root
+                if p.workspace_root and Path(p.workspace_root).resolve() != root:
+                    raise ValueError('project workspace root does not match the configured gateway')
+                p = replace(p, workspace_root=str(root))
             if r.workflow is not None:
                 raise ValueError('workflow already initialized; counters cannot reset')
             if r.status not in {RunStatus.DRAFT, RunStatus.RUNNING, RunStatus.AWAITING_APPROVAL}:
@@ -179,7 +232,9 @@ class WorkflowRunner:
                 raise ValueError('task creation limit exceeded')
             if any(t.assignee is not AgentKind.DEVELOPER for t in p.tasks if t.id in r.task_ids):
                 raise ValueError('implementation tasks must belong to Developer')
-            wf = WorkflowState(limits=limits, tasks_created=len(r.task_ids))
+            wf = WorkflowState(limits=limits, tasks_created=len(r.task_ids),
+                               agent_snapshots=tuple(d.snapshot() for d in self.definitions.values()),
+                               workspace_tools=self.workspace_gateway is not None)
             phase = 'plan' if r.status is RunStatus.DRAFT else 'assign'
             snapshot = tuple((k.value, d.snapshot().config_digest) for k, d in self.definitions.items())
             return commit_run(p, replace(r, workflow=wf, phase=phase, config_snapshot=snapshot), 'workflow.initialized')
@@ -209,6 +264,9 @@ class WorkflowRunner:
 
     def step(self):
         """Reserve one operation atomically, release the store lock during model IO."""
+        if self.workspace_gateway and self._execution_gate():
+            self.workspace_gateway.restore(self.store.operations(self.project_id, self.run_id),
+                self.store.approvals(self.project_id, self.run_id), self.run, self.store.tool_history(self.project_id, self.run_id))
         token = 'op_' + uuid4().hex
         reserved = []
         def reserve(p):
@@ -216,7 +274,7 @@ class WorkflowRunner:
             wf = r.workflow
             if wf is None:
                 raise ValueError('initialize workflow first')
-            if wf.pending or wf.pending_permissions or r.status not in {RunStatus.DRAFT, RunStatus.PLANNING, RunStatus.RUNNING}:
+            if not self._execution_gate() or wf.pending or wf.pending_permissions or r.status not in {RunStatus.DRAFT, RunStatus.PLANNING, RunStatus.RUNNING}:
                 raise _NoOperation
             if wf.iterations >= wf.limits.max_iterations:
                 return block_state(p, r, 'workflow iteration limit reached', exhausted_limit=True)
@@ -233,7 +291,12 @@ class WorkflowRunner:
                     return block_state(p, r, 'no dependency-ready task')
             if wf.invocations >= wf.limits.max_invocations:
                 return block_state(p, r, 'invocation limit reached', exhausted_limit=True)
-            wf = replace(wf, pending=token, iterations=wf.iterations + 1,
+            kind = AgentKind.DEVELOPER if phase == 'develop' else AgentKind.REVIEWER if phase == 'review' else AgentKind.MANAGER
+            snapshot = self.definitions[kind].snapshot()
+            invocation = InvocationRecord(token, snapshot.agent_id, snapshot.config_digest, phase, r.execution_generation, 2)
+            if snapshot not in wf.agent_snapshots:
+                wf = replace(wf, agent_snapshots=(*wf.agent_snapshots, snapshot))
+            wf = replace(wf, invocation_records=(*wf.invocation_records, invocation), pending=token, iterations=wf.iterations + 1,
                          invocations=wf.invocations + 1,
                          instructions=(*wf.instructions, *wf.pending_instructions), pending_instructions=())
             r = replace(r, workflow=wf, phase=phase)
@@ -247,13 +310,15 @@ class WorkflowRunner:
             return False
         project, run = reserved[0]
         generation = run.execution_generation
+        epoch = run.workflow.recovery_epoch
+        requirement_version = project.requirement_version
         calls = 0
         def before_call():
             nonlocal calls
             def charge(p):
                 r = p.run(self.run_id)
                 wf = r.workflow
-                if r.execution_generation != generation or wf.pending != token or r.status in {
+                if r.execution_generation != generation or wf.recovery_epoch != epoch or p.requirement_version != requirement_version or wf.pending != token or r.status in {
                     RunStatus.CANCELED, RunStatus.PAUSED, RunStatus.PAUSE_REQUESTED, RunStatus.WAITING_FOR_USER}:
                     raise BoundaryStopped('operation stopped at safe boundary')
                 if calls >= wf.limits.max_calls_per_invocation or wf.llm_calls >= wf.limits.max_llm_calls:
@@ -262,6 +327,23 @@ class WorkflowRunner:
                                   'provider.call_reserved', payload={'operation_id': token})
             self.store.atomic_update(self.project_id, charge)
             calls += 1
+        operations = {}
+        def call_started(record):
+            current = self.run
+            if (current.execution_generation != generation or current.workflow.recovery_epoch != epoch
+                    or current.status not in {RunStatus.DRAFT, RunStatus.PLANNING, RunStatus.RUNNING}):
+                raise BoundaryStopped('provider operation stopped before submission')
+            cp = replace(checkpoint(project, run, 'operation.started'), operation_id=record.call_id, boundary='provider.prepared')
+            op = ExecutionOperation(record.call_id, 'provider', cp, operation=agent.id, call_record=record)
+            self.store.record_operation(op)
+            op = op.evolve(stage=OperationStage.EXECUTING)
+            self.store.record_operation(op)
+            operations[record.call_id] = op
+        def call_finished(record, output):
+            op = operations[record.call_id]
+            certainty = OutcomeCertainty.CONFIRMED_SUCCESS if record.status == 'succeeded' else OutcomeCertainty.CONFIRMED_FAILURE
+            self.store.record_operation(op.evolve(stage=OperationStage.SETTLED, certainty=certainty,
+                                                 call_record=record, proposal=output))
         result = None
         failure = None
         try:
@@ -273,16 +355,17 @@ class WorkflowRunner:
                 invocation_id=token, output_schema=schema, workflow_context=extra,
                 source_versions={'requirements': str(project.requirement_version), 'generation': str(generation),
                                  'run': str(run.version)},
-                before_call=before_call, max_attempts=run.workflow.limits.max_provider_attempts,
+                before_call=before_call, on_call_started=call_started, on_call_finished=call_finished, max_attempts=run.workflow.limits.max_provider_attempts,
                 max_repairs=run.workflow.limits.max_repairs)
         except (InvocationError, ValueError) as exc:
             failure = exc
         records = result.call_records if result else getattr(failure, 'call_records', ())
         def finish(p):
             r = p.run(self.run_id)
-            wf = replace(r.workflow, call_records=(*r.workflow.call_records, *records))
+            wf = retain_calls(r.workflow, records)
             r = replace(r, workflow=wf)
-            if r.execution_generation != generation or wf.pending != token or not r.active or r.status is RunStatus.WAITING_FOR_USER:
+            if (r.execution_generation != generation or wf.recovery_epoch != epoch or p.requirement_version != requirement_version
+                    or wf.pending != token or not r.active or r.status is RunStatus.WAITING_FOR_USER):
                 if wf.pending == token:
                     r = replace(r, workflow=replace(wf, pending=None))
                 return commit_run(p, r, 'operation.stale_ignored', payload={'operation_id': token, 'calls': len(records)})
@@ -473,9 +556,11 @@ class WorkflowRunner:
             if self.workspace_gateway:
                 # Validate model identity before sealing any gateway artifacts.
                 SubmissionManifest.capture(output, attempt, ('pending file capture',))
-                captured = self.workspace_gateway.execute(FileToolRequest('capture_submission',
-                    AgentKind.DEVELOPER, attempt.id, r.execution_generation,
-                    submission_id=output.submission_id, paths=tuple(f.path for f in output.changed_files))).submission
+                captured = self.workspace_gateway._submissions.get(output.submission_id)
+                if captured is None:
+                    captured = self.workspace_gateway.execute(FileToolRequest('capture_submission',
+                        AgentKind.DEVELOPER, attempt.id, r.execution_generation,
+                        submission_id=output.submission_id, paths=tuple(f.path for f in output.changed_files))).submission
                 actual_types = {f.path: 'added' if f.before is None else 'modified' for f in captured.files}
                 output = replace(output, changed_files=tuple(replace(f, change_type=actual_types[f.path])
                                                             for f in output.changed_files))
@@ -556,7 +641,9 @@ class WorkflowRunner:
         if phase == 'review':
             payload['review_id'] = output.review_id
         if phase == 'develop' and self.workspace_gateway:
-            payload['tool_call_id'] = self.workspace_gateway.records[-1].id
+            captured_ops = [o for o in self.store.operations(self.project_id, self.run_id)
+                            if o.kind == 'file' and o.operation == 'capture_submission' and o.result and o.result.id == sub.id]
+            payload['tool_call_id'] = captured_ops[-1].id if captured_ops else self.workspace_gateway.records[-1].id
             payload['file_digest'] = sub.files.digest
         after, events = commit_run(p, r, event, tasks=tasks, payload=payload)
         return after, tuple(replace(e, task_id=task_id) for e in events)

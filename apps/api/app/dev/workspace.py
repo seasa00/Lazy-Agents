@@ -41,14 +41,14 @@ class WorkspaceFixtureProvider(ScriptedWorkflowProvider):
         return replace(response, output=out)
 
 
-def make_workspace_runner(root, provider=None, *, command_profiles=(), command_limits=None, **policy_options):
-    store = InMemoryStateStore()
-    store.create_project(ProjectState('workspace-demo', 'M3.1', 'Update a greeting in a disposable workspace',
+def make_workspace_runner(root, provider=None, *, command_profiles=(), command_limits=None, store=None, runtime=None, **policy_options):
+    store = store if store is not None else InMemoryStateStore()
+    store.create_project(ProjectState('workspace-demo', 'M3.1', 'Update a greeting in a disposable workspace', workspace_root=str(root),
         requirements=(Requirement('greeting', 'Expand greeting', ('Greeting contains hello world',)),)))
     run = store.create_run('workspace-demo', run_id='workspace-run')
     gateway = WorkspaceToolGateway(WorkspacePolicy(root, **policy_options), command_profiles=command_profiles,
                                    **({} if command_limits is None else {'command_limits': command_limits}))
-    runner = WorkflowRunner(store, 'workspace-demo', run.id, provider or WorkspaceFixtureProvider(), gateway=gateway)
+    runner = WorkflowRunner(store, 'workspace-demo', run.id, provider or WorkspaceFixtureProvider(), gateway=gateway, runtime=runtime)
     runner.initialize()
     approve_generated(runner)
     runner.step()
