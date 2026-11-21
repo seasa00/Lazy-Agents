@@ -8,22 +8,23 @@ integration with the existing Lazy Agents system. No new implementation work is
 assigned to M6. Earlier visual/reference-pass notes are historical records.
 
 **Active milestone: M7 — Agent Runtime Modernization & Production Hardening.**
-**M7.1 is COMPLETE. M7.2 is NOT STARTED and ready for review.** M6 remains frozen
+**M7.1 and M7.2 are COMPLETE. M7.3 is NOT STARTED.** M6 remains frozen
 and closed.
 
 | Planned phase | Goal | Status |
 |---|---|---|
 | M7.1 — LangChain Agent Layer | Developer file and approved command/test adapters, durable continuation, paired A–F parity and Inspector backend verification | Complete |
-| M7.2 — LangGraph Orchestration | Compare legacy and graph orchestrators before switching | Not Started — ready for review |
+| M7.2 — LangGraph Orchestration | Compare legacy and graph orchestrators before switching | Complete; legacy remains default |
 | M7.3 — LangGraph Observability Integration | Feed real runtime traces into existing M6 surfaces | Not Started |
 | M7.4 — Reliability & Recovery Hardening | Preserve domain guarantees under failures/restarts | Not Started |
 | M7.5 — Evaluation & Regression Suite | Produce repeatable comparative evidence and metrics | Not Started |
 | M7.6 — Production & Portfolio Finish | Verify setup/deployment and prepare demonstration materials | Not Started |
 
 The [roadmap](IMPLEMENTATION_MILESTONES.md) defines scope and review gates.
-LangChain Core 1.8.2 is used for Developer tool abstractions and calls. The
+LangChain Core 1.8.3 is used for Developer tool abstractions and calls. The
 provider-neutral provider remains the model boundary and is the sole accounting
-path. LangGraph is not introduced. Developer file tools pass through the existing
+path. LangGraph 1.2.24 is available through an explicit opt-in orchestrator.
+Developer file tools pass through the existing
 Permission Gateway. Command/test requests now suspend into durable continuations;
 recovery reconstructs an approval from its persisted pre-request seed and exact
 permission audit if a process stops before the workflow commit. Paired A–F
@@ -38,8 +39,8 @@ execution/resume state. Preserve exactly three agents, one active run, revision
 limits, exact-submission review, and backend-authoritative M6 observability.
 Do not expose hidden chain-of-thought; prompt/context traces must redact secrets.
 
-Keep the existing orchestrator and provider/runtime contracts. No LangGraph or
-M7.2 work has started. Current LangChain execution is enabled only for providers
+Keep the existing orchestrator and provider/runtime contracts. The M7.2 comparison
+passed; see [the compatibility record](M7_2_ORCHESTRATOR_COMPATIBILITY.md). Current LangChain execution is enabled only for providers
 that declare tool support; unsupported deterministic providers retain the existing
 path. M7.1 has passed its deterministic comparison and bounded end-to-end gates.
 Manager/Reviewer schemas remain guarded by existing provider and domain validation.

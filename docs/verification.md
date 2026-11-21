@@ -2,12 +2,26 @@
 
 **Current official status:** M1–M6 complete; M6 frozen and closed, including the
 production Office Experience, approved Pixel Office, Agent Inspector,
-pop-out/fullscreen, and system integration. M7 — Agent Runtime Modernization & Production Hardening is **In Progress**. M7.1 is complete; M7.2–M7.6 have not started. See the [roadmap](IMPLEMENTATION_MILESTONES.md).
+pop-out/fullscreen, and system integration. M7 — Agent Runtime Modernization & Production Hardening is **In Progress**. M7.1–M7.2 are complete; M7.3–M7.6 have not started. See the [roadmap](IMPLEMENTATION_MILESTONES.md).
 
-Entries after the M7.1 section are historical verification records. Statements
+Entries after the M7.2 section are historical verification records. Statements
 such as “M4.3 has not started,” earlier visual descriptions, and individual test
 counts apply to those recorded checkpoints, not the current project status.
 
+
+## M7.2 implementation verification — complete
+
+LangGraph 1.2.24 is locked alongside the existing `langchain-core` 1.8.3;
+Python requirement remains 3.11+. `tests/test_m72.py` compares isolated
+legacy and graph fixtures for first PASS, FAIL/revision/PASS, repeated FAIL at
+three rounds, approved and denied command continuation, pause/resume,
+cancellation and stale snapshot, dependency scheduling, finalization, malformed
+Reviewer output, and restart from approval waiting or a committed submission,
+including a SQLite reopen followed by the required explicit recovery resume.
+Both paths retain the same event sequence and domain outcomes, with one
+`AgentRuntime` call record per provider request. The full backend suite passed
+with 488 tests; `git diff --check` passed. See [the comparison report](M7_2_ORCHESTRATOR_COMPATIBILITY.md).
+Legacy remains the production default. M7.3 observability is not implemented.
 
 ## M7.1 implementation verification — complete
 

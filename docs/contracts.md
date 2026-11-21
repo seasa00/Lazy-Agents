@@ -2,9 +2,9 @@
 
 Current contract baseline: completed M1–M6. M6's production Office Experience,
 Pixel Office, Agent Inspector, pop-out/fullscreen, and integration are frozen.
-M7 — Agent Runtime Modernization & Production Hardening is In Progress; M7.1 is complete and M7.2 has not started.
+M7 — Agent Runtime Modernization & Production Hardening is In Progress; M7.1–M7.2 are complete and M7.3 has not started.
 The [roadmap](IMPLEMENTATION_MILESTONES.md) defines migration constraints.
-Current M7.1 adds `DeveloperToolAdapter` (`app/agents/langchain_layer.py`), which
+M7.1 adds `DeveloperToolAdapter` (`app/agents/langchain_layer.py`), which
 binds LangChain tools to a single Developer attempt/generation and delegates file
 operations and configured command/test profile requests to `WorkspaceToolGateway`.
 `AgentRuntime` executes declared tool calls with a bounded count and records each
@@ -19,6 +19,28 @@ SQLite ownership, mandatory Permission Gateway enforcement, immutable evidence,
 exact-submission reviews, accounting, idempotency, and explicit recovery.
 Graph checkpoints, if introduced, hold execution/resume state only. Runtime
 traces must be real and redacted and must not expose hidden chain-of-thought.
+
+### M7.2 orchestration boundary
+
+`Orchestrator` exposes the runner's initialize, approve, step, and
+run-until-stopped operations. `LegacyOrchestrator` is the default;
+`LangGraphOrchestrator` is selected explicitly with `make_orchestrator('langgraph',
+...)` for isolated comparisons. Both use the same `WorkflowRunner` operation
+boundary, `WorkflowControls`, domain validators, gateway, store, and
+`AgentRuntime`. Graph nodes route the persisted phases: Manager plan and task
+assignment, Developer, Reviewer, Manager acceptance or revision, and Manager
+finalization. Reviewer PASS only selects the Manager acceptance node; domain
+validation still commits acceptance. Reviewer FAIL selects the Manager revision
+node; the existing three-round limit remains authoritative. Ready tasks are
+selected by the existing scheduler and Manager assignment validation.
+
+`WorkflowGraphState` holds only run/task/attempt/submission/review identities,
+phase, generation, status, and a per-step progress flag. Nodes reload the run
+from the store and fence execution against current phase, task, attempt, and
+generation. There is no graph checkpointer or graph-owned domain state.
+Approval waiting ends the graph invocation; the existing durable M7.1
+continuation is resumed by a later invocation. Recovery, cancellation, pause,
+events, permissions, usage/cost, and evidence remain domain-owned.
 
 ### M7.1 command/test continuation
 

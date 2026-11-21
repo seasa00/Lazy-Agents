@@ -1,13 +1,13 @@
 # AI Office implementation decisions
 
-## Roadmap decision — M7 runtime modernization (M7.1 complete)
+## Roadmap decision — M7 runtime modernization (M7.1–M7.2 complete)
 
 M1–M6 are complete. M6 is frozen and closed, including the production Office
 Experience, approved Pixel Office, Agent Inspector, pop-out/fullscreen, and
-integration. M6 remains closed; M7.1 is complete and M7.2 has not started.
+integration. M6 remains closed; M7.1–M7.2 are complete and M7.3 has not started.
 
 Replace the former single **M7 — Real-Time & Reliability Polish** gate with
-**M7 — Agent Runtime Modernization & Production Hardening**, with M7.1 complete:
+**M7 — Agent Runtime Modernization & Production Hardening**, with M7.1–M7.2 complete:
 M7.1 LangChain agents; M7.2 LangGraph orchestration; M7.3 observability;
 M7.4 recovery hardening; M7.5 evaluations; M7.6 production/portfolio finish.
 
@@ -23,6 +23,19 @@ M7.6 plans safe placeholder-only environment templates, overriding the earlier
 template-removal preference for that future phase only. No template or ignore
 rule is changed now. Earlier decisions below remain historical; the new
 [roadmap](IMPLEMENTATION_MILESTONES.md) governs future migration scope.
+
+## M7.2 — graph coordination with domain authority
+
+Select LangGraph 1.2.24, compatible with Python 3.11+ and the locked
+`langchain-core` 1.8.3. The graph routes persisted phases through the existing
+`WorkflowRunner.step` operation, which alone reserves invocations, calls the
+three existing agents, and validates and commits proposed transitions.
+`LangGraphOrchestrator` has no checkpointer: SQLite run, operation, and
+continuation records are the restart boundary. Graph state is transient and
+contains references only. The explicit factory defaults to legacy in the
+production runner; LangGraph is opt-in for isolated fixtures. Keep this default
+through M7.3–M7.5 evidence gates. No graph callback writes events or accounting.
+See [the comparison](M7_2_ORCHESTRATOR_COMPATIBILITY.md).
 
 
 ## M7.1 — LangChain Core tool boundary and accounting ownership
@@ -77,7 +90,7 @@ wrappers are intentionally omitted in M7.1. The durable approval continuation is
 covered by deterministic fixtures. Paired A–F domain comparisons, both bounded
 offline workflows, Inspector backend trace verification and the full regression
 suite passed; see [the compatibility record](M7_1_COMPATIBILITY.md). Keep the
-existing orchestrator; M7.2 has not started.
+existing orchestrator. At M7.1 closure, M7.2 had not started.
 
 ## D1 — OpenRouter is the first live provider
 

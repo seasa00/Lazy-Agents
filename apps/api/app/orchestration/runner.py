@@ -289,12 +289,14 @@ class WorkflowRunner:
             pass
         return self.run
 
-    def step(self):
+    def step(self, *, expected_identity=None):
         """Reserve one operation atomically, release the store lock during model IO."""
         if self.workspace_gateway and self._execution_gate():
             self.workspace_gateway.restore(self.store.operations(self.project_id, self.run_id),
                 self.store.approvals(self.project_id, self.run_id), self.run, self.store.tool_history(self.project_id, self.run_id))
         current = self.run
+        if expected_identity is not None and self._graph_identity(current) != expected_identity:
+            return False
         if current.status is RunStatus.PAUSED:
             return False
         waiting = next((c for c in reversed(current.workflow.tool_continuations)
@@ -307,6 +309,8 @@ class WorkflowRunner:
         def reserve(p):
             nonlocal token
             r = p.run(self.run_id)
+            if expected_identity is not None and self._graph_identity(r) != expected_identity:
+                raise _NoOperation
             wf = r.workflow
             if wf is None:
                 raise ValueError('initialize workflow first')
@@ -640,6 +644,13 @@ class WorkflowRunner:
             return after, (*events, *usage_events)
         self.store.atomic_update(self.project_id, finish_with_usage)
         return True
+
+    @staticmethod
+    def _graph_identity(run):
+        """Small durable fence for an orchestration step, not graph-owned state."""
+        attempt = next((a.id for a in reversed(run.workflow.attempts)
+                        if a.task_id == run.current_task_id), None) if run.workflow else None
+        return (run.phase, run.execution_generation, run.current_task_id, attempt)
 
     def _execute_tool_continuation(self, continuation):
         """Run the approved command at a fresh application boundary, then persist its receipt."""

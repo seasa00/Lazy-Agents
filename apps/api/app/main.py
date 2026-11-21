@@ -18,8 +18,8 @@ from app.persistence.models import ArtifactIntegrityError
 
 def offline_runner(store, project_id, run_id):
     from app.dev.workflow import ScriptedWorkflowProvider
-    from app.orchestration.runner import WorkflowRunner
-    return WorkflowRunner(store, project_id, run_id, ScriptedWorkflowProvider())
+    from app.orchestration.orchestrators import make_orchestrator
+    return make_orchestrator('legacy', store, project_id, run_id, ScriptedWorkflowProvider())
 
 
 def create_app(*, store=None, runner_factory=offline_runner):
