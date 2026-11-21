@@ -3,7 +3,6 @@ from dataclasses import asdict, is_dataclass, replace
 from hashlib import sha256
 import json
 import os
-import re
 from decimal import Decimal
 from app.domain.agents import AgentKind, AgentDefinition, default_agent_definitions
 from app.domain.events import DomainEvent
@@ -16,6 +15,7 @@ from app.agents.contracts import Requirement
 from app.orchestration.recovery import RecoveryCoordinator
 from app.permissions.policy import WorkspacePolicy
 from app.api.schemas import ProjectSnapshot
+from app.orchestration.graph_observability import redact_text
 
 
 def public(value):
@@ -34,11 +34,7 @@ def public(value):
     if isinstance(value, bytes):
         value = value.decode('utf-8')
     if isinstance(value, str):
-        for key, secret in os.environ.items():
-            if secret and any(word in key.lower() for word in ('secret', 'password', 'api_key', 'token', 'credential')):
-                value = value.replace(secret, '[REDACTED]')
-    if isinstance(value, str):
-        value = re.sub(r'(?i)(authorization\s*[:=]\s*)([^\r\n]+)', r'\1[REDACTED]', value)
+        value = redact_text(value)
     return value
 
 
@@ -196,7 +192,8 @@ class ControlService:
             return self._ack(key, project_id)
         return self.store.admit_command(project_id, key, fingerprint, body.expected_version, apply)
 
-    def inspection(self, project_id, run_id):
+    def inspection(self, project_id, run_id, include_agent_debug=False):
+        from app.orchestration.graph_observability import project_agent_debug, project_office_poses
         project = self.store.get_project(project_id)
         run = project.run(run_id)
         runner = self.runners.get((project_id, run_id))
@@ -205,14 +202,22 @@ class ControlService:
             kind.value: {'files': {operation: gateway.policy.decide(kind, operation, 'captured-submission' if kind is not AgentKind.DEVELOPER else None)
                 for operation in ('list', 'read', 'write', 'edit', 'capture_submission')},
                 'command_request': gateway.policy.decide_command(kind)} for kind in AgentKind}
-        return public({'recent_events': self.store.recent_run_events(project_id, run_id),
+        usage = self.store.usage(project_id, run_id)
+        tools = self.store.tool_history(project_id, run_id)
+        operations = self.store.operations(project_id, run_id, metadata_only=True)
+        detail = {'recent_events': self.store.recent_run_events(project_id, run_id),
             'capabilities': capabilities, 'usage': self.store.usage(project_id, run_id),
             'project_usage': self.store.usage(project_id),
-            'tools': self.store.tool_history(project_id, run_id),
-            'operations': self.store.operations(project_id, run_id, metadata_only=True),
+            'tools': tools,
+            'operations': operations,
             'recovery': self.recovery.inspect(project_id, run_id),
             'settings': self.settings(project_id),
-            'limits': run.workflow.limits if run.workflow else None})
+            'limits': run.workflow.limits if run.workflow else None}
+        if include_agent_debug:
+            detail['agent_debug'] = project_agent_debug(project, run,
+                self.store.events(project_id), tools, operations, usage)
+            detail['office_poses'] = project_office_poses(run)
+        return public(detail)
 
     def artifact(self, project_id, run_id, submission_id, path):
         p = self.store.get_project(project_id)

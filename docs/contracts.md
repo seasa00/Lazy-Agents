@@ -2,7 +2,7 @@
 
 Current contract baseline: completed M1–M6. M6's production Office Experience,
 Pixel Office, Agent Inspector, pop-out/fullscreen, and integration are frozen.
-M7 — Agent Runtime Modernization & Production Hardening is In Progress; M7.1–M7.2 are complete and M7.3 has not started.
+M7 — Agent Runtime Modernization & Production Hardening is In Progress; M7.1–M7.3 are complete and M7.4 has not started.
 The [roadmap](IMPLEMENTATION_MILESTONES.md) defines migration constraints.
 M7.1 adds `DeveloperToolAdapter` (`app/agents/langchain_layer.py`), which
 binds LangChain tools to a single Developer attempt/generation and delegates file
@@ -41,6 +41,25 @@ generation. There is no graph checkpointer or graph-owned domain state.
 Approval waiting ends the graph invocation; the existing durable M7.1
 continuation is resumed by a later invocation. Recovery, cancellation, pause,
 events, permissions, usage/cost, and evidence remain domain-owned.
+
+### M7.3 observability boundary
+
+`GraphObservabilityAdapter` records `graph.node_started` with the existing
+invocation reservation and the node/invocation outcome after the domain reducer
+commits. These runtime events use the existing `DomainEvent` envelope and cursor;
+they never commit a task, review, submission, or usage. Domain and gateway events
+remain the sole source of those facts. The Inspector projection joins event IDs
+and ordered sequences to existing tool receipts, operations, immutable artifacts,
+agent definitions, and `AgentRuntime` usage. Its rows refer to persisted IDs and
+redact stored prompt/context. It does not expose hidden reasoning.
+
+`GET /projects/{project_id}/runs/{run_id}/inspection?agent_debug=true` adds
+`agent_debug` and `office_poses` to the existing inspection response. The default
+response stays small for older consumers. The embedded Pixel Office and pop-out
+request this projection; legacy runs receive the same Inspector contract without
+graph lifecycle rows. SSE replay uses the existing project event cursor. Clients
+deduplicate trace rows by event ID and animate handoffs only for new live events.
+The [M7.3 record](M7_3_OBSERVABILITY.md) contains the mapping and limits.
 
 ### M7.1 command/test continuation
 

@@ -6,6 +6,7 @@ from typing import Protocol, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from app.domain.projects import RunStatus
+from app.orchestration.graph_observability import GraphObservabilityAdapter
 from app.orchestration.runner import WorkflowRunner
 
 
@@ -92,7 +93,8 @@ class LangGraphOrchestrator(WorkflowRunner):
 
     def _operation(self, state: WorkflowGraphState):
         identity = (state['phase'], state['execution_generation'], state['task_id'], state['attempt_id'])
-        progressed = super().step(expected_identity=identity)
+        observer = GraphObservabilityAdapter(self._route(state))
+        progressed = super().step(expected_identity=identity, observer=observer)
         return self._snapshot(progressed)
 
     def _build_graph(self):

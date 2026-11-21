@@ -7,6 +7,12 @@ import './index.css';
 const OfficeExperienceView = dynamic(() => import('./OfficeExperienceView'), {
   ssr: false,
 });
-export default function OfficeExperience() {
-  return <OfficeExperienceView />;
+export default function OfficeExperience({ projectId, runId, cursor, connection, runState }: {
+  projectId?: string;
+  runId?: string;
+  cursor?: number;
+  connection?: string;
+  runState?: string;
+}) {
+  return <OfficeExperienceView projectId={projectId} runId={runId} cursor={cursor} connection={connection} runState={runState} />;
 }

@@ -2,12 +2,37 @@
 
 **Current official status:** M1–M6 complete; M6 frozen and closed, including the
 production Office Experience, approved Pixel Office, Agent Inspector,
-pop-out/fullscreen, and system integration. M7 — Agent Runtime Modernization & Production Hardening is **In Progress**. M7.1–M7.2 are complete; M7.3–M7.6 have not started. See the [roadmap](IMPLEMENTATION_MILESTONES.md).
+pop-out/fullscreen, and system integration. M7 — Agent Runtime Modernization & Production Hardening is **In Progress**. M7.1–M7.3 are complete; M7.4–M7.6 have not started. See the [roadmap](IMPLEMENTATION_MILESTONES.md).
 
-Entries after the M7.2 section are historical verification records. Statements
+Entries after the M7.3 section are historical verification records. Statements
 such as “M4.3 has not started,” earlier visual descriptions, and individual test
 counts apply to those recorded checkpoints, not the current project status.
 
+
+## M7.3 implementation verification — complete
+
+`tests/test_m73.py` (7 tests) checks committed graph node/invocation lifecycle,
+identity/order, domain acceptance after review commit, file read/edit and test
+receipts, two durable approvals across FAIL → Manager revision → PASS, denial
+without command execution, SSE replay from a cursor, stable Inspector event IDs,
+legacy trace projection, secret redaction, and malformed Reviewer failure without
+false acceptance. The real command fixture produced one failed and one successful
+test, two exact submission/review links, one revision, and one `AgentRuntime`
+call record per provider request. M7.2 regression tests (8) also pass with
+domain-event parity; graph runtime events are excluded from that parity comparison.
+
+Backend full suite: **495 passed**. Frontend Vitest: **129 passed**;
+`npm run typecheck` and `npm run build` passed. The existing M5.2 browser
+inspection/recovery end-to-end scenario passed after the detailed Inspector
+projection became an opt-in query; it checks the real Office/Inspector and
+permissions/evidence/usage surfaces. `langgraph-office.test.tsx` selects the
+backend-powered Pixel Office Inspector and checks Trace, Tools, Evidence, and
+Usage tabs through a cursor replay. Existing Office/controller tests check
+handoff event-ID deduplication, SSE replay, and reconnect snapshot behavior.
+`git diff --check` passed. Frontend production code changed only to consume the
+backend projection within the existing Office/Inspector layout. See
+[M7.3 observability](M7_3_OBSERVABILITY.md). Legacy remains the default.
+M7.4 has not started.
 
 ## M7.2 implementation verification — complete
 

@@ -104,8 +104,8 @@ def create_app(*, store=None, runner_factory=offline_runner):
         return service(request).configure(project_id, body, key(idempotency_key))
 
     @app.get('/projects/{project_id}/runs/{run_id}/inspection')
-    def inspection(project_id: str, run_id: str, request: Request):
-        return service(request).inspection(project_id, run_id)
+    def inspection(project_id: str, run_id: str, request: Request, agent_debug: bool = False):
+        return service(request).inspection(project_id, run_id, include_agent_debug=agent_debug)
 
     @app.post('/projects/{project_id}/plan', response_model=CommandAcknowledgement)
     def plan(project_id: str, body: Command, request: Request, idempotency_key: str = Header()):

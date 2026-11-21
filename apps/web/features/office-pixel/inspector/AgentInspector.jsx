@@ -100,8 +100,8 @@ function Prompt({ s, redactions }) {
       <Collapsible title="Agent instructions" copyText={p.instructions} defaultOpen><pre className="ai-pre wrap">{p.instructions}</pre></Collapsible>
       <Collapsible title="Task prompt" copyText={p.taskPrompt} defaultOpen><pre className="ai-pre wrap">{p.taskPrompt}</pre></Collapsible>
       {p.requirements && <Collapsible title="User / project requirements" copyText={p.requirements}><pre className="ai-pre wrap">{p.requirements}</pre></Collapsible>}
-      <Collapsible title="Context passed to this invocation" meta={`${fmtN((p.context || []).reduce((a, c) => a + (c.tokens || 0), 0))} tokens`}>
-        <ul className="ai-ctx">{(p.context || []).map((c, i) => <li key={i}><span>{c.label}</span><em>{c.source}</em><b>{fmtN(c.tokens)} tok</b></li>)}</ul>
+      <Collapsible title={s.source === 'backend' ? 'Retained context references' : 'Context passed to this invocation'} meta={s.source === 'backend' ? 'stored references' : `${fmtN((p.context || []).reduce((a, c) => a + (c.tokens || 0), 0))} tokens`}>
+        <ul className="ai-ctx">{(p.context || []).map((c, i) => <li key={i}><span>{c.label}</span><em>{c.source}</em>{c.tokens != null && <b>{fmtN(c.tokens)} tok</b>}</li>)}</ul>
       </Collapsible>
       <Collapsible title="Structured inputs" copyText={json(p.structuredInputs)}><OutputLines text={json(p.structuredInputs)} /></Collapsible>
       <Collapsible title="Model configuration" copyText={json(mc)}><OutputLines text={json(mc)} /></Collapsible>
@@ -197,7 +197,7 @@ function Usage({ s }) {
       <Bar label="Tests" value={l.testsMs || 0} total={tot} cls="tests" />
       <Bar label="Total" value={tot} total={tot} cls="total" />
       <h4 className="ai-h">Optimization signals</h4>
-      <p className="ai-note">Observations from deterministic mock analysis — signals, not definitive recommendations.</p>
+      <p className="ai-note">{s.source === 'backend' ? 'Observations from retained backend records — signals, not definitive recommendations.' : 'Observations from deterministic mock analysis — signals, not definitive recommendations.'}</p>
       {(s.optimizationSignals || []).map((o) => (
         <div key={o.id} className={`ai-sig ${sevCls(o.severity)}`}><strong>⚠ {o.observation}</strong><p>{o.potential}</p></div>
       ))}
@@ -224,14 +224,14 @@ export default function AgentInspector({ snapshot, onClose, variant = 'side', wi
         <div className="ai-id">
           <span className="ai-avatar" aria-hidden />
           <div>
-            <h2>{s.name} <span className={`ai-live ${live && !idle ? 'on' : ''}`}>{live ? (idle ? '○ IDLE' : '● LIVE') : '❚❚ SNAPSHOT'}</span></h2>
+            <h2>{s.name} <span className={`ai-live ${live && !idle ? 'on' : ''}`}>{!live ? '❚❚ SNAPSHOT' : s.mode === 'historical' ? '○ HISTORICAL' : idle ? '○ IDLE' : '● LIVE'}</span></h2>
             <p className="ai-sub"><strong>{s.status}</strong> · {s.role}</p>
           </div>
         </div>
         <button type="button" className="ai-close" onClick={onClose} aria-label="Close inspector">✕</button>
         <p className="ai-task"><span className="ai-k">Task</span> {s.currentTask}</p>
         <div className="ai-bar-row">
-          <span className="ai-mock">MOCK DATA</span>
+          {s.source !== 'backend' && <span className="ai-mock">MOCK DATA</span>}
           <button type="button" className="ai-seg" onClick={() => setFrozen(frozen ? null : snapshot)} aria-pressed={!live}>{live ? 'Freeze snapshot' : 'Resume live'}</button>
         </div>
       </header>

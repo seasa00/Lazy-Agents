@@ -21,11 +21,11 @@ export function StatusBar({ agents, selected, onSelect, connection }) {
 }
 
 // Pop out / Fullscreen — deliberately small and quiet.
-export function ViewControls({ popout, fullscreen, canFullscreen, onFullscreen, scale }) {
+export function ViewControls({ popout, fullscreen, canFullscreen, onFullscreen, scale, url }) {
   const [note, setNote] = useState('')
   const open = () => {
     let w = null
-    try { w = window.open(popoutUrl(), 'lazy-agents-office', 'popup=yes,width=960,height=720') } catch { /* blocked */ }
+    try { w = window.open(url || popoutUrl(), 'lazy-agents-office', 'popup=yes,width=960,height=720') } catch { /* blocked */ }
     setNote(w ? '' : 'Pop-up blocked — allow pop-ups for this page')
     if (!w) setTimeout(() => setNote(''), 4000)
   }

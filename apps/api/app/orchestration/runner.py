@@ -289,7 +289,7 @@ class WorkflowRunner:
             pass
         return self.run
 
-    def step(self, *, expected_identity=None):
+    def step(self, *, expected_identity=None, observer=None):
         """Reserve one operation atomically, release the store lock during model IO."""
         if self.workspace_gateway and self._execution_gate():
             self.workspace_gateway.restore(self.store.operations(self.project_id, self.run_id),
@@ -336,8 +336,9 @@ class WorkflowRunner:
                 r = replace(r, workflow=wf, phase='develop')
                 resumed.append(updated)
                 reserved.append((p, r))
-                return commit_run(p, r, 'developer.continuation_resumed', payload={
+                after, events = commit_run(p, r, 'developer.continuation_resumed', payload={
                     'continuation_id': updated.id, 'invocation_id': token})
+                return after, (observer.started(p, r, token), *events) if observer else events
             if wf.iterations >= wf.limits.max_iterations:
                 return block_state(p, r, 'workflow iteration limit reached', exhausted_limit=True)
             phase = 'assign' if r.phase == 'execution' else r.phase
@@ -363,7 +364,14 @@ class WorkflowRunner:
                          instructions=(*wf.instructions, *wf.pending_instructions), pending_instructions=())
             r = replace(r, workflow=wf, phase=phase)
             reserved.append((p, r))
-            return commit_run(p, r, 'operation.started', payload={'operation_id': token, 'phase': phase})
+            payload = {'operation_id': token, 'phase': phase}
+            if observer:
+                payload.update(agent_id=snapshot.agent_id, invocation_id=token,
+                    attempt_id=next((a.id for a in reversed(wf.attempts)
+                                     if a.task_id == r.current_task_id), None),
+                    execution_generation=r.execution_generation, node_name=observer.node_name)
+            after, events = commit_run(p, r, 'operation.started', payload=payload)
+            return after, (observer.started(p, r, token), *events) if observer else events
         try:
             self.store.atomic_update(self.project_id, reserve)
         except _NoOperation:
@@ -641,7 +649,12 @@ class WorkflowRunner:
             after, events = finish(p)
             usage_events = tuple(DomainEvent(p.id, 'usage.recorded', record.to_dict(),
                 run_id=run.id, task_id=run.current_task_id, correlation_id=token) for record in records)
-            return after, (*events, *usage_events)
+            if observer:
+                node_event = observer.finished(p, run, after, token, events)
+                observed = (observer.invocation_finished(p, run, node_event), node_event)
+            else:
+                observed = ()
+            return after, (*events, *usage_events, *observed)
         self.store.atomic_update(self.project_id, finish_with_usage)
         return True
 

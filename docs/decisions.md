@@ -1,13 +1,13 @@
 # AI Office implementation decisions
 
-## Roadmap decision — M7 runtime modernization (M7.1–M7.2 complete)
+## Roadmap decision — M7 runtime modernization (M7.1–M7.3 complete)
 
 M1–M6 are complete. M6 is frozen and closed, including the production Office
 Experience, approved Pixel Office, Agent Inspector, pop-out/fullscreen, and
-integration. M6 remains closed; M7.1–M7.2 are complete and M7.3 has not started.
+integration. M6 remains closed; M7.1–M7.3 are complete and M7.4 has not started.
 
 Replace the former single **M7 — Real-Time & Reliability Polish** gate with
-**M7 — Agent Runtime Modernization & Production Hardening**, with M7.1–M7.2 complete:
+**M7 — Agent Runtime Modernization & Production Hardening**, with M7.1–M7.3 complete:
 M7.1 LangChain agents; M7.2 LangGraph orchestration; M7.3 observability;
 M7.4 recovery hardening; M7.5 evaluations; M7.6 production/portfolio finish.
 
@@ -23,6 +23,18 @@ M7.6 plans safe placeholder-only environment templates, overriding the earlier
 template-removal preference for that future phase only. No template or ignore
 rule is changed now. Earlier decisions below remain historical; the new
 [roadmap](IMPLEMENTATION_MILESTONES.md) governs future migration scope.
+
+## M7.3 — durable graph runtime facts and Inspector projection
+
+Record graph node and invocation lifecycle inside the existing atomic runner
+commit boundary. The graph adapter writes identity and outcome references only;
+domain events still follow validated commits and `AgentRuntime` remains the sole
+LLM accounting writer. Project the Inspector from persisted event, operation,
+gateway, submission, review, and usage records. Make the detailed projection an
+opt-in inspection query so existing polling clients remain responsive. The Pixel
+Office consumes this projection and the existing SSE cursor without deriving
+workflow state. Keep the legacy default and omit LangGraph-specific checkpoints.
+See [the M7.3 record](M7_3_OBSERVABILITY.md).
 
 ## M7.2 — graph coordination with domain authority
 

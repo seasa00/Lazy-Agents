@@ -8,14 +8,14 @@ integration with the existing Lazy Agents system. No new implementation work is
 assigned to M6. Earlier visual/reference-pass notes are historical records.
 
 **Active milestone: M7 — Agent Runtime Modernization & Production Hardening.**
-**M7.1 and M7.2 are COMPLETE. M7.3 is NOT STARTED.** M6 remains frozen
+**M7.1–M7.3 are COMPLETE. M7.4 is NOT STARTED.** M6 remains frozen
 and closed.
 
 | Planned phase | Goal | Status |
 |---|---|---|
 | M7.1 — LangChain Agent Layer | Developer file and approved command/test adapters, durable continuation, paired A–F parity and Inspector backend verification | Complete |
 | M7.2 — LangGraph Orchestration | Compare legacy and graph orchestrators before switching | Complete; legacy remains default |
-| M7.3 — LangGraph Observability Integration | Feed real runtime traces into existing M6 surfaces | Not Started |
+| M7.3 — LangGraph Observability Integration | Feed real runtime traces into existing M6 surfaces | Complete; legacy remains default |
 | M7.4 — Reliability & Recovery Hardening | Preserve domain guarantees under failures/restarts | Not Started |
 | M7.5 — Evaluation & Regression Suite | Produce repeatable comparative evidence and metrics | Not Started |
 | M7.6 — Production & Portfolio Finish | Verify setup/deployment and prepare demonstration materials | Not Started |
@@ -44,6 +44,13 @@ passed; see [the compatibility record](M7_2_ORCHESTRATOR_COMPATIBILITY.md). Curr
 that declare tool support; unsupported deterministic providers retain the existing
 path. M7.1 has passed its deterministic comparison and bounded end-to-end gates.
 Manager/Reviewer schemas remain guarded by existing provider and domain validation.
+
+M7.3 adds durable `graph.*` lifecycle facts through the existing event envelope
+and projects these with domain, gateway, operation, and `AgentRuntime` records into
+the existing Inspector tabs. The embedded Pixel Office uses backend poses and
+refreshes its Inspector from the durable event cursor. The graph adapter never
+commits domain success or usage. See [the observability record](M7_3_OBSERVABILITY.md).
+Legacy remains the default; M7.4 reliability work has not started.
 
 Verification evidence and the remaining exit gates are recorded in
 [verification.md](verification.md).

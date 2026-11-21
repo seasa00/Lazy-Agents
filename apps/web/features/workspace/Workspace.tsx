@@ -135,7 +135,7 @@ export function WorkspaceView() {
             aria-label="Office Pixel"
           >
             <div className="office-pixel-workspace-frame">
-              <OfficeExperience />
+              <OfficeExperience projectId={project.id} runId={run?.id} cursor={state.cursor} connection={state.connection} runState={run ? `${run.status}:${run.phase}:${run.current_task_id}` : undefined} />
             </div>
           </section>
           <details className="legacy-office">

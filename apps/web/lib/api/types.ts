@@ -331,6 +331,20 @@ export interface RecoveryInspection {
 }
 export interface Inspection {
   recent_events?: DomainEvent[];
+  agent_debug?: Record<AgentKind, {
+    agentId: AgentKind;
+    source: 'backend';
+    status: string;
+    currentTask: string | null;
+    currentAction: string | null;
+    trace: Array<{ id: string; at: string; type: string; text: string; refs: Record<string, unknown> }>;
+    tools: Array<Record<string, unknown>>;
+    decisions: Array<Record<string, unknown>>;
+    outputs: Array<Record<string, unknown>>;
+    evidence: Array<Record<string, unknown>>;
+    usage: Record<string, unknown>;
+  }>;
+  office_poses?: Record<AgentKind, string>;
   capabilities?: Record<
     AgentKind,
     {

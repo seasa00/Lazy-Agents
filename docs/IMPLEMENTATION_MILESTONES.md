@@ -1,8 +1,8 @@
 # AI Office — Implementation milestone roadmap
 
-**Official status: M1–M6 COMPLETE. M6 is frozen and closed. M7.1–M7.2 COMPLETE; M7.3 is not started.**
+**Official status: M1–M6 COMPLETE. M6 is frozen and closed. M7.1–M7.3 COMPLETE; M7.4 is not started.**
 
-M7.1 and M7.2 are closed. This update does not begin M7.3 or later work.
+M7.1–M7.3 are closed. This update does not begin M7.4 or later work.
 
 | Milestone | Status |
 |---|---|
@@ -12,7 +12,7 @@ M7.1 and M7.2 are closed. This update does not begin M7.3 or later work.
 | M4 — Persistence & Observability | Complete |
 | M5 — Functional Web UI | Complete |
 | M6 — AI Office Experience | Complete — frozen and closed |
-| M7 — Agent Runtime Modernization & Production Hardening | In Progress — M7.1–M7.2 complete; M7.3–M7.6 not started |
+| M7 — Agent Runtime Modernization & Production Hardening | In Progress — M7.1–M7.3 complete; M7.4–M7.6 not started |
 
 Architecture reference: [AI_OFFICE_BLUEPRINT.md](../AI_OFFICE_BLUEPRINT.md). The M7 target below supersedes the original proposal where migration direction differs; existing [domain contracts](contracts.md) remain binding.
 
@@ -472,7 +472,7 @@ retained as historical scope; earlier layout/module proposals do not reopen it.
 
 ## M7 — Agent Runtime Modernization & Production Hardening
 
-**Status: IN PROGRESS.** M7.1–M7.2 are complete; M7.3–M7.6 are planned and not started.
+**Status: IN PROGRESS.** M7.1–M7.3 are complete; M7.4–M7.6 are planned and not started.
 
 **Goal:** Introduce LangChain and LangGraph incrementally while preserving the
 Lazy Agents domain architecture, permissions, persistence, evidence, recovery,
@@ -600,7 +600,7 @@ support or an automatic switch. Never roll back by replaying uncertain effects.
 
 ### M7.3 — LangGraph Observability Integration
 
-**Status:** Not Started. **Dependency:** reviewed M7.2 migration boundary.
+**Status:** Complete. **Dependency:** reviewed M7.2 migration boundary. See [M7.3 observability record](M7_3_OBSERVABILITY.md).
 
 **Goal:** Map genuine LangGraph runtime execution into the event/trace architecture
 consumed by the completed M6 Office Experience and Agent Inspector.
@@ -749,9 +749,9 @@ roadmap itself adds no runtime dependencies or production code.
 | M4.3 | Usable backend for a technical user comfortable with CLI/API; permissions, history, recovery, and live events exist |
 | **M5.2** | **Best first personal-use release:** complete supervised browser workflow with evidence, controls, usage, and baseline recovery |
 | M6 | Complete and frozen: production Office Experience, approved Pixel Office, Agent Inspector, pop-out/fullscreen, and system integration |
-| M7 | In Progress: M7.1–M7.2 complete; later phases remain planned |
+| M7 | In Progress: M7.1–M7.3 complete; later phases remain planned |
 
-M5.2 is the best point to begin using AI Office for small, supervised personal projects in dedicated workspaces. M6 adds the visual identity; it is not a prerequisite for usefulness. M7.1–M7.2 are complete; later observability, reliability, evaluation, and production phases remain not started. Valuable projects still deserve normal version control/backups and the documented trusted-command boundary.
+M5.2 is the best point to begin using AI Office for small, supervised personal projects in dedicated workspaces. M6 adds the visual identity; it is not a prerequisite for usefulness. M7.1–M7.3 are complete; later reliability, evaluation, and production phases remain not started. Valuable projects still deserve normal version control/backups and the documented trusted-command boundary.
 
 ## Compact roadmap
 
@@ -788,4 +788,4 @@ M7  Agent Runtime Modernization & Production Hardening — IN PROGRESS
     M7.6 Production & Portfolio Finish
 ```
 
-There are 18 review gates: 12 completed through M6 and six M7 phases. M7.1–M7.2 are complete; M7.3 is not started. M6 remains frozen and closed.
+There are 18 review gates: 12 completed through M6 and six M7 phases. M7.1–M7.3 are complete; M7.4 is not started. M6 remains frozen and closed.

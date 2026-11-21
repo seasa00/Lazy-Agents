@@ -97,9 +97,9 @@ export function sendCommand(
   });
 }
 
-export const getInspection = (id: string, run: string) =>
+export const getInspection = (id: string, run: string, agentDebug = false) =>
   request<import('./types').Inspection>(
-    `${projectPath(id)}/runs/${encodeURIComponent(run)}/inspection`,
+    `${projectPath(id)}/runs/${encodeURIComponent(run)}/inspection${agentDebug ? '?agent_debug=true' : ''}`,
   );
 export const getSettings = (id: string) =>
   request<import('./types').Settings>(projectPath(id) + '/settings');

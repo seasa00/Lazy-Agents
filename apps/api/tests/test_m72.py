@@ -60,7 +60,9 @@ class M72Tests(unittest.TestCase):
     def outcome(runner):
         run = runner.run
         wf = run.workflow
-        events = tuple(e.type for e in runner.store.events(runner.project_id) if e.run_id == run.id)
+        # M7.3 adds graph-only runtime facts; domain/event parity remains exact.
+        events = tuple(e.type for e in runner.store.events(runner.project_id)
+                       if e.run_id == run.id and not e.type.startswith('graph.'))
         return (run.status.value, run.phase,
             tuple(runner.store.get_project(runner.project_id).task(t).status.value for t in run.task_ids),
             tuple(s.version for s in wf.submissions),
